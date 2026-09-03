@@ -1,0 +1,29 @@
+{
+  "name": "@deepseek-ai/dsh-external-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Provider-neutral External Agent platform seam: registration, routes, turns, permissions, activity, and a scripted fake.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24"
+  }
+}
