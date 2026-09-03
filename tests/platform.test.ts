@@ -1,335 +1,230 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from 'vitest'
 import {
   BoundedEventLog,
   DuplicateProviderError,
   ExternalAgentProviderRegistry,
-  FakeExternalAgentProvider,
+  FullAccessConfirmationError,
   HostExpiredError,
   RouteResolutionError,
-  SessionDisposedError,
   TurnAbortedError,
+  UnscopedAllowAlwaysError,
   UnsupportedModeError,
+  boundExternalAgentEvent,
+  createExternalAgentTurnHost,
+  createSessionModelRoute,
   offersAllowAlways,
+  optionId,
   outcomeForOption,
   parseRouteSpecifier,
-  type ActivityEvent,
-  type ExternalAgentSession,
-  type PermissionOutcome,
-  type PermissionRequest,
-  type RunTurnArgs,
-} from "../src/index.js";
+  providerId,
+  resumeCursor,
+  sessionId,
+  turnId,
+  withBoundedExternalAgentHost,
+  type ExternalAgentEvent,
+  type ExternalAgentOpenRequest,
+  type ExternalAgentPermissionDecision,
+  type ExternalAgentPermissionRequest,
+} from '../src/index.js'
+import { FakeExternalAgentProvider, fakePermissionRequest } from '../src/fake.js'
+import { ExternalAgentPrimaryConsumer, ExternalAgentSubagentConsumer, type ExternalAgentConsumerEvent } from '../src/consumers.js'
+import { ExternalAgentSettingsEditorRegistry, ExternalAgentSettingsEditorUnavailableError, ExternalAgentSettingsPageModel, MemoryExternalAgentSettingsStore } from '../src/settings.js'
+import { ExternalAgentFilesystemPolicyError, createExternalAgentFilesystemHandler, type ExternalAgentFilesystemResolver } from '../src/filesystem.js'
 
-function quietTurn(prompt = "do it"): RunTurnArgs {
-  return {
-    prompt,
-    mode: "approval-required",
-    signal: new AbortController().signal,
-    onEvent: () => undefined,
-    onPermission: () => Promise.resolve("rejected" as PermissionOutcome),
-    onUserInput: () => Promise.resolve({ status: "unavailable" as const }),
-  };
+const modes = ['approval-required', 'auto-accept-edits', 'full-access'] as const
+function route(provider: string, model = 'coder') { return createSessionModelRoute('external-agent', provider, model) }
+function openRequest(provider: string, mode: (typeof modes)[number] = 'approval-required'): ExternalAgentOpenRequest { return { route: route(provider), session: sessionId('session-1'), permissionMode: mode } }
+function host(decision: ExternalAgentPermissionDecision = { kind: 'allow-once', optionId: optionId('allow-once') }) {
+  return { publish: (): void => undefined, requestPermission: async (): Promise<ExternalAgentPermissionDecision> => decision, requestUserInput: async () => ({ answers: ['answer'] }) }
 }
 
-describe("route specifiers", () => {
-  it("parses llm routes", () => {
-    expect(parseRouteSpecifier("llm:deepseek-chat")).toEqual({ kind: "llm", model: "deepseek-chat" });
-  });
+describe('external-agent platform', () => {
+  it('parses explicit LLM and external routes without fallback', () => {
+    expect(parseRouteSpecifier('llm:gpt')).toEqual({ kind: 'llm', model: 'gpt' })
+    expect(parseRouteSpecifier('external-agent:acme/coder')).toEqual(route('acme'))
+    expect(() => parseRouteSpecifier('llm:')).toThrow(RouteResolutionError)
+    expect(() => parseRouteSpecifier('external-agent:acme/coder/extra')).toThrow(RouteResolutionError)
+    expect(() => parseRouteSpecifier('coder')).toThrow(RouteResolutionError)
+  })
 
-  it("parses external-agent routes", () => {
-    expect(parseRouteSpecifier("external-agent:acme/coder")).toEqual({
-      kind: "external-agent",
-      provider: "acme",
-      model: "coder",
-    });
-  });
+  it('registers exact providers and removes only its own row', async () => {
+    const provider = new FakeExternalAgentProvider('acme', [{ id: 'coder', supportedModes: modes }])
+    const registry = new ExternalAgentProviderRegistry()
+    const remove = registry.register(provider)
+    expect(() => registry.register(provider)).toThrow(DuplicateProviderError)
+    await expect(registry.resolveExternalRoute('acme', 'missing')).rejects.toThrow(RouteResolutionError)
+    expect(registry.get('acme')).toBe(provider)
+    await remove()
+    expect(registry.has('acme')).toBe(false)
+    expect(registry.names()).toEqual([])
+    expect(registry.has('')).toBe(false)
+    expect(registry.get('')).toBeUndefined()
+  })
 
-  it("rejects unknown or malformed specifiers without fallback", () => {
-    expect(() => parseRouteSpecifier("acme/coder")).toThrow(RouteResolutionError);
-    expect(() => parseRouteSpecifier("llm:")).toThrow(RouteResolutionError);
-    expect(() => parseRouteSpecifier("external-agent:only-provider")).toThrow(RouteResolutionError);
-    expect(() => parseRouteSpecifier("external-agent:/no-provider")).toThrow(RouteResolutionError);
-  });
-});
+  it('rejects unscoped allow-always outcomes by name', () => {
+    expect(() => outcomeForOption({ optionId: optionId('native'), kind: 'allow_always', label: 'Always' })).toThrow(UnscopedAllowAlwaysError)
+  })
 
-describe("registry", () => {
-  it("rejects duplicate registration", () => {
-    const registry = new ExternalAgentProviderRegistry();
-    const provider = new FakeExternalAgentProvider("acme", [{ id: "coder", supportedModes: ["approval-required"] }]);
-    registry.register(provider);
-    expect(() => registry.register(provider)).toThrow(DuplicateProviderError);
-  });
+  it('requires full-access confirmation and audits before a provider starts', async () => {
+    const audit: unknown[] = []
+    const registry = new ExternalAgentProviderRegistry({ auditFullAccess: entry => { audit.push(entry) } })
+    const provider = new FakeExternalAgentProvider('secure', [{ id: 'coder', supportedModes: modes }], { auditFullAccess: () => undefined })
+    registry.register(provider)
+    await expect(registry.openSession(openRequest('secure', 'full-access'))).rejects.toThrow(FullAccessConfirmationError)
+    const session = await registry.openSession({ ...openRequest('secure', 'full-access'), fullAccessConfirmed: true, fullAccessAuditId: 'audit-1' })
+    expect(audit).toHaveLength(1)
+    await session.dispose()
+  })
 
-  it("resolves exact provider/model pairs and rejects unknown models", async () => {
-    const registry = new ExternalAgentProviderRegistry();
-    registry.register(new FakeExternalAgentProvider("acme", [{ id: "coder", supportedModes: ["approval-required"] }]));
-    await expect(registry.resolveExternalRoute("acme", "coder")).resolves.toEqual({
-      kind: "external-agent",
-      provider: "acme",
-      model: "coder",
-    });
-    await expect(registry.resolveExternalRoute("acme", "other")).rejects.toThrow(RouteResolutionError);
-    await expect(registry.resolveExternalRoute("missing", "coder")).rejects.toThrow(RouteResolutionError);
-  });
+  it('enforces mode support and maps only scoped allow-always options', async () => {
+    const request = fakePermissionRequest('write')
+    expect(offersAllowAlways(request.options)).toBe(true)
+    expect(outcomeForOption(request.options[0])).toBe('allowed-once')
+    expect(outcomeForOption(request.options[1])).toBe('allowed-for-session')
+    const provider = new FakeExternalAgentProvider('limited', [{ id: 'coder', supportedModes: ['approval-required'] }])
+    const registry = new ExternalAgentProviderRegistry()
+    registry.register(provider)
+    await expect(registry.openSession(openRequest('limited', 'auto-accept-edits'))).rejects.toThrow(UnsupportedModeError)
+  })
 
-  it("disposer unregisters and is idempotent", () => {
-    const registry = new ExternalAgentProviderRegistry();
-    const provider = new FakeExternalAgentProvider("acme", []);
-    const dispose = registry.register(provider);
-    expect(registry.has("acme")).toBe(true);
-    dispose();
-    dispose();
-    expect(registry.has("acme")).toBe(false);
-    expect(registry.names()).toEqual([]);
-  });
+  it('expires hosts and rejects pending interactions on cancellation', async () => {
+    const controller = new AbortController()
+    const pending = createExternalAgentTurnHost(controller.signal, { publish: (): void => undefined, requestPermission: () => new Promise(() => undefined), requestUserInput: async () => ({ answers: [] }) })
+    const waiting = pending.requestPermission(fakePermissionRequest())
+    controller.abort()
+    await expect(waiting).rejects.toThrow(TurnAbortedError)
+    pending.expire()
+    expect(() => pending.publish({ type: 'assistant-delta', text: 'late' })).toThrow(HostExpiredError)
+  })
 
-  it("reregistration after dispose works for HMR replacement", () => {
-    const registry = new ExternalAgentProviderRegistry();
-    const first = new FakeExternalAgentProvider("acme", []);
-    const dispose = registry.register(first);
-    dispose();
-    const second = new FakeExternalAgentProvider("acme", []);
-    expect(() => registry.register(second)).not.toThrow();
-    expect(registry.get("acme")).toBe(second);
-  });
-});
+  it('runs scripted turns and rejects cross-provider cursors', async () => {
+    const provider = new FakeExternalAgentProvider('fake', [{ id: 'coder', supportedModes: modes }], { scripts: [{ events: [{ type: 'assistant-delta', text: 'hello' }], permission: { request: fakePermissionRequest(), decision: { kind: 'allowed-for-session', optionId: optionId('allow-always-write') } }, result: { text: 'done' } }] })
+    const registry = new ExternalAgentProviderRegistry()
+    registry.register(provider)
+    const session = await registry.openSession(openRequest('fake'))
+    const events: ExternalAgentEvent[] = []
+    const result = await session.runTurn({ turn: turnId('turn-1'), prompt: 'go', permissionMode: 'approval-required', signal: new AbortController().signal }, { publish: event => { events.push(event) }, requestPermission: async request => ({ kind: 'allowed-for-session', optionId: request.options[1].optionId }), requestUserInput: async () => ({ answers: [] }) })
+    expect(result.status).toBe('completed')
+    expect(result.resumeCursor?.provider).toBe(provider.info.id)
+    expect(events[0]).toEqual({ type: 'assistant-delta', text: 'hello' })
+    await expect(provider.openSession({ ...openRequest('fake'), resumeCursor: resumeCursor('other', 'private') })).rejects.toThrow(/another provider/)
+    await session.dispose()
+  })
 
-describe("sessions", () => {
-  it("opens the exact model and rejects unknown models", () => {
-    const provider = new FakeExternalAgentProvider("acme", [
-      { id: "coder", supportedModes: ["approval-required"] },
-    ]);
-    const session = provider.openSession({ model: "coder" });
-    expect(session.model).toBe("coder");
-    expect(session.provider).toBe("acme");
-    expect(() => provider.openSession({ model: "other" })).toThrow(RouteResolutionError);
-  });
+  it('cancels an in-flight session during registry disposal', async () => {
+    const provider = new FakeExternalAgentProvider('slow', [{ id: 'coder', supportedModes: modes }], { scripts: [{ permission: { request: fakePermissionRequest() } }] })
+    const registry = new ExternalAgentProviderRegistry()
+    const remove = registry.register(provider)
+    const session = await registry.openSession(openRequest('slow'))
+    const running = session.runTurn({ turn: turnId('turn-slow'), prompt: 'wait', permissionMode: 'approval-required', signal: new AbortController().signal }, { publish: (): void => undefined, requestPermission: () => new Promise(() => undefined), requestUserInput: async () => ({ answers: [] }) })
+    await remove()
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+    expect(registry.has('slow')).toBe(false)
+  })
 
-  it("rejects unadvertised modes", async () => {
-    const provider = new FakeExternalAgentProvider("acme", [
-      { id: "coder", supportedModes: ["approval-required"] },
-    ]);
-    const session = provider.openSession({ model: "coder" });
-    await expect(session.runTurn({ ...quietTurn(), mode: "full-access" })).rejects.toThrow(UnsupportedModeError);
-  });
+  it('bounds complete event and interaction payloads', async () => {
+    const event = boundExternalAgentEvent({ type: 'tool-activity', toolId: '工具'.repeat(20), name: 'x'.repeat(100), status: 'completed', input: '😀'.repeat(100) }, { maxTextBytes: 64, maxPayloadBytes: 160 })
+    expect(new TextEncoder().encode(JSON.stringify(event)).byteLength).toBeLessThanOrEqual(160)
+    const seen: string[] = []
+    const bounded = withBoundedExternalAgentHost({ publish: (): void => undefined, requestPermission: async request => { seen.push(request.reason); return { kind: 'allow-once', optionId: request.options[0].optionId } }, requestUserInput: async () => ({ answers: [] }) }, { maxTextBytes: 8, maxPayloadBytes: 512 })
+    await bounded.requestPermission({ ...fakePermissionRequest(), reason: 'r'.repeat(100) })
+    expect(seen[0]).toBe('r'.repeat(8))
+    expect(() => boundExternalAgentEvent({ type: 'usage', inputTokens: 1, outputTokens: 2 }, { maxTextBytes: 0, maxPayloadBytes: 1 })).toThrow(RangeError)
+  })
 
-  it("reports cancelled for a pre-aborted signal without executing", async () => {
-    const provider = new FakeExternalAgentProvider("acme", [
-      { id: "coder", supportedModes: ["approval-required"] },
-    ]);
-    const session = provider.openSession({ model: "coder" });
-    let executed = false;
-    provider.enqueueTurn(() => {
-      executed = true;
-      return Promise.resolve({ status: "completed" as const, cursor: null });
-    });
-    const controller = new AbortController();
-    controller.abort();
-    const result = await session.runTurn({ ...quietTurn(), signal: controller.signal });
-    expect(result).toEqual({ status: "cancelled", cursor: null });
-    expect(executed).toBe(false);
-    expect(provider.pendingTurns).toBe(1);
-  });
+  it('switches primary routes and folds pending/committed interaction events', async () => {
+    const first = new FakeExternalAgentProvider('one', [{ id: 'coder', supportedModes: modes }], { scripts: [{ permission: { request: fakePermissionRequest() }, result: { text: 'one' } }] })
+    const second = new FakeExternalAgentProvider('two', [{ id: 'coder', supportedModes: modes }], { scripts: [{ result: { text: 'two' } }] })
+    const registry = new ExternalAgentProviderRegistry()
+    registry.register(first); registry.register(second)
+    const consumer = new ExternalAgentPrimaryConsumer(registry)
+    const sessionEvents: string[] = []
+    const request = (provider: string, turn: string) => ({ session: sessionId('primary'), route: route(provider), turn, prompt: 'go', permissionMode: 'approval-required' as const, signal: new AbortController().signal, host: { publish: (): void => undefined, requestPermission: async (req: ExternalAgentPermissionRequest) => ({ kind: 'allow-once' as const, optionId: req.options[0].optionId }), requestUserInput: async () => ({ answers: [] }) }, onSessionEvent: (event: ExternalAgentConsumerEvent) => { sessionEvents.push(event.type) } })
+    expect((await consumer.runTurn(request('one', 't1'))).text).toBe('one')
+    expect((await consumer.runTurn(request('two', 't2'))).text).toBe('two')
+    expect(sessionEvents).toEqual(expect.arrayContaining(['permission-pending', 'permission-committed', 'turn-finished']))
+    await consumer.dispose()
+  })
 
-  it("disposal is idempotent and later turns throw", async () => {
-    const provider = new FakeExternalAgentProvider("acme", [
-      { id: "coder", supportedModes: ["approval-required"] },
-    ]);
-    const session: ExternalAgentSession = provider.openSession({ model: "coder" });
-    expect(session.isDisposed).toBe(false);
-    await session.dispose();
-    await session.dispose();
-    expect(session.isDisposed).toBe(true);
-    await expect(session.runTurn(quietTurn())).rejects.toThrow(SessionDisposedError);
-  });
+  it('disposes subagent sessions for foreground and background runs', async () => {
+    const provider = new FakeExternalAgentProvider('worker', [{ id: 'coder', supportedModes: modes }], { scripts: [{ result: { text: 'foreground' } }, { result: { text: 'background' } }] })
+    const registry = new ExternalAgentProviderRegistry()
+    registry.register(provider)
+    const consumer = new ExternalAgentSubagentConsumer(registry)
+    const base = { parentSession: sessionId('parent'), route: route('worker'), prompt: 'work', permissionMode: 'approval-required' as const, host: host(), jobId: 'job-1' }
+    expect((await consumer.runForeground(base)).text).toBe('foreground')
+    const job = consumer.startBackground({ ...base, jobId: 'job-2' })
+    expect((await job.result).text).toBe('background')
+    await consumer.dispose()
+  })
 
-  it("aborts a pending permission request when the turn is cancelled", async () => {
-    const provider = new FakeExternalAgentProvider("acme", [
-      { id: "coder", supportedModes: ["approval-required"] },
-    ]);
-    provider.enqueueTurn(async (ctx) => {
-      await expect(ctx.host.requestPermission({ tool: "rm", summary: "delete", options: [] })).rejects.toThrow(
-        TurnAbortedError,
-      );
-      return { status: "cancelled", cursor: null };
-    });
-    const session = provider.openSession({ model: "coder" });
-    const controller = new AbortController();
-    const pending = session.runTurn({
-      ...quietTurn(),
-      signal: controller.signal,
-      onPermission: () => new Promise<PermissionOutcome>(() => undefined),
-    });
-    controller.abort();
-    await expect(pending).resolves.toEqual({ status: "cancelled", cursor: null });
-  });
+  it('closes switched primary sessions and reopens with the route cursor', async () => {
+    const provider = new FakeExternalAgentProvider('cursor', [{ id: 'coder', supportedModes: modes }, { id: 'reviewer', supportedModes: modes }], { scripts: [{ result: { text: 'coder' } }, { result: { text: 'reviewer' } }, { result: { text: 'resumed' } }] })
+    const opened: ExternalAgentOpenRequest[] = []
+    let disposed = 0
+    const originalOpen = provider.openSession.bind(provider)
+    provider.openSession = async request => {
+      opened.push(request)
+      const session = await originalOpen(request)
+      return { ref: session.ref, supportedModes: session.supportedModes, runTurn: session.runTurn.bind(session), dispose: async () => { disposed += 1; await session.dispose() } }
+    }
+    const registry = new ExternalAgentProviderRegistry()
+    registry.register(provider)
+    const consumer = new ExternalAgentPrimaryConsumer(registry)
+    const makeRequest = (model: string, turn: string) => ({ session: sessionId('primary-cursor'), route: route('cursor', model), turn, prompt: 'go', permissionMode: 'approval-required' as const, signal: new AbortController().signal, host: host() })
+    await consumer.runTurn(makeRequest('coder', 'one'))
+    await consumer.selectRoute(route('cursor', 'reviewer'))
+    expect(disposed).toBe(1)
+    await consumer.runTurn(makeRequest('reviewer', 'two'))
+    await consumer.selectRoute(route('cursor', 'coder'))
+    expect(disposed).toBe(2)
+    await consumer.runTurn(makeRequest('coder', 'three'))
+    expect(opened).toHaveLength(3)
+    expect(opened[2].resumeCursor?.value).toBe('fake-native-1')
+    await consumer.dispose()
+  })
 
-  it("resumes a cursor from the previous turn of the same provider", async () => {
-    const provider = new FakeExternalAgentProvider("acme", [
-      { id: "coder", supportedModes: ["approval-required"] },
-    ]);
-    provider.enqueueTextTurn("first", "cursor-1");
-    const first = provider.openSession({ model: "coder" });
-    const one = await first.runTurn(quietTurn("first"));
-    expect(one.cursor).toBe("cursor-1");
-    const resumed = provider.openSession({ model: "coder", resumeCursor: one.cursor });
-    expect(resumed.cursor).toBe("cursor-1");
-    provider.enqueueTextTurn("second", "cursor-2");
-    const two = await resumed.runTurn(quietTurn("second"));
-    expect(two.cursor).toBe("cursor-2");
-  });
+  it('cancels and awaits an active background child during disposal', async () => {
+    const provider = new FakeExternalAgentProvider('slow-worker', [{ id: 'coder', supportedModes: modes }], { scripts: [{ delayMs: 20, result: { text: 'late' } }] })
+    const registry = new ExternalAgentProviderRegistry()
+    registry.register(provider)
+    const consumer = new ExternalAgentSubagentConsumer(registry)
+    const job = consumer.startBackground({ jobId: 'slow-job', parentSession: sessionId('parent'), route: route('slow-worker'), prompt: 'wait', permissionMode: 'approval-required', host: host() })
+    await consumer.dispose()
+    await expect(job.result).resolves.toMatchObject({ status: 'cancelled' })
+  })
 
-  it("keeps native histories separate across providers", async () => {
-    const left = new FakeExternalAgentProvider("left", [{ id: "coder", supportedModes: ["approval-required"] }]);
-    const right = new FakeExternalAgentProvider("right", [{ id: "coder", supportedModes: ["approval-required"] }]);
-    left.enqueueTextTurn("left", "left-1");
-    right.enqueueTextTurn("right", "right-1");
-    const a = await left.openSession({ model: "coder" }).runTurn(quietTurn());
-    const b = await right.openSession({ model: "coder" }).runTurn(quietTurn());
-    expect(a.cursor).toBe("left-1");
-    expect(b.cursor).toBe("right-1");
-  });
-});
+  it('joins Settings rows and reports unloaded editors', async () => {
+    const store = new MemoryExternalAgentSettingsStore()
+    const provider = providerId('settings-provider')
+    await store.saveDirectory({ provider, instanceId: 'a', displayName: 'A' })
+    store.seed({ provider, instanceId: 'a', values: { executable: '/bin/agy' } }, { provider, instanceId: 'a', authenticated: true, accountLabel: 'account' })
+    const editors = new ExternalAgentSettingsEditorRegistry()
+    const dispose = editors.register({ provider, instanceId: 'a', snapshot: () => ({ provider, instanceId: 'a', title: 'A', status: { installed: true, authenticated: true, live: true, ready: true }, fields: [], actions: [] }), run: async () => 'ok' })
+    const page = new ExternalAgentSettingsPageModel(store, editors)
+    expect(page.snapshot().rows[0].credentials?.authenticated).toBe(true)
+    dispose()
+    expect(page.snapshot().rows[0].editor).toBeUndefined()
+    await expect(page.runAction(provider, 'a', 'refresh-models')).rejects.toThrow(ExternalAgentSettingsEditorUnavailableError)
+  })
 
-describe("turn host", () => {
-  it("publishes activity and answers permission from the consumer", async () => {
-    const provider = new FakeExternalAgentProvider("acme", [
-      { id: "coder", supportedModes: ["approval-required", "auto-accept-edits"] },
-    ]);
-    provider.enqueueTurn(async (ctx) => {
-      ctx.host.publish({ type: "assistant-delta", delta: "hello" });
-      ctx.host.publish({ type: "tool-start", tool: "edit" });
-      const outcome = await ctx.host.requestPermission({
-        tool: "edit",
-        summary: "edit file",
-        options: [{ id: "once", kind: "allow-once", label: "Allow once" }],
-      });
-      ctx.host.publish({ type: "tool-end", tool: "edit", exit: "ok" });
-      ctx.host.publish({ type: "plan-update", plan: ["done"] });
-      ctx.host.publish({ type: "usage", inputTokens: 3, outputTokens: 4 });
-      return { status: "completed", cursor: "cursor-9", message: outcome };
-    });
-    const session = provider.openSession({ model: "coder" });
-    const seen: ActivityEvent[] = [];
-    const result = await session.runTurn({
-      ...quietTurn(),
-      mode: "auto-accept-edits",
-      onEvent: (event) => seen.push(event),
-      onPermission: (request: PermissionRequest) => {
-        expect(request.tool).toBe("edit");
-        return Promise.resolve("allowed-once" as PermissionOutcome);
-      },
-    });
-    expect(result.status).toBe("completed");
-    expect(result.message).toBe("allowed-once");
-    expect(seen.map((event) => event.type)).toEqual([
-      "assistant-delta",
-      "tool-start",
-      "tool-end",
-      "plan-update",
-      "usage",
-    ]);
-  });
+  it('mediates roots, symlink escapes and attachment writes', async () => {
+    const policy = { workspaceRoots: ['/workspace'], attachmentRoots: ['/attachments'], readTextFile: async (path: string) => path, writeTextFile: async () => undefined }
+    const resolver: ExternalAgentFilesystemResolver = { realpath: async path => path === '/workspace/link' ? '/etc/passwd' : path }
+    const handler = createExternalAgentFilesystemHandler(policy, resolver)
+    await expect(handler('fs/read_text_file', { path: '/workspace/src/a.ts' })).resolves.toBe('/workspace/src/a.ts')
+    await expect(handler('fs/read_text_file', { path: '/workspace/link' })).rejects.toThrow(ExternalAgentFilesystemPolicyError)
+    await expect(handler('fs/write_text_file', { path: '/attachments/a.txt', content: 'x' })).rejects.toThrow(ExternalAgentFilesystemPolicyError)
+    await expect(handler('terminal/create', {})).rejects.toThrow(ExternalAgentFilesystemPolicyError)
+  })
 
-  it("routes user questions through the consumer and returns answers", async () => {
-    const provider = new FakeExternalAgentProvider("acme", [
-      { id: "coder", supportedModes: ["approval-required"] },
-    ]);
-    provider.enqueueTurn(async (ctx) => {
-      const answer = await ctx.host.requestUserInput({
-        questions: [{ id: "q1", question: "proceed?", options: ["yes", "no"] }],
-      });
-      return {
-        status: "completed",
-        cursor: null,
-        message: answer.status === "answered" ? answer.answers["q1"] : answer.status,
-      };
-    });
-    const session = provider.openSession({ model: "coder" });
-    const result = await session.runTurn({
-      ...quietTurn(),
-      onUserInput: (request) => {
-        expect(request.questions).toHaveLength(1);
-        return Promise.resolve({ status: "answered", answers: { q1: "yes" } });
-      },
-    });
-    expect(result.message).toBe("yes");
-  });
-
-  it("refuses retained host use after the turn settles", async () => {
-    const provider = new FakeExternalAgentProvider("acme", [
-      { id: "coder", supportedModes: ["approval-required"] },
-    ]);
-    let retained: { publish: (event: ActivityEvent) => void } | undefined;
-    provider.enqueueTurn(async (ctx) => {
-      retained = ctx.host;
-      return { status: "completed", cursor: null };
-    });
-    const session = provider.openSession({ model: "coder" });
-    await session.runTurn(quietTurn());
-    expect(retained).toBeDefined();
-    expect(() => retained!.publish({ type: "assistant-delta", delta: "late" })).toThrow(HostExpiredError);
-  });
-
-  it("propagates provider failures with zero retries", async () => {
-    const provider = new FakeExternalAgentProvider("acme", [
-      { id: "coder", supportedModes: ["approval-required"] },
-    ]);
-    let calls = 0;
-    provider.enqueueTurn(() => {
-      calls += 1;
-      return Promise.reject(new Error("transport blew up"));
-    });
-    const session = provider.openSession({ model: "coder" });
-    await expect(session.runTurn(quietTurn())).rejects.toThrow("transport blew up");
-    expect(calls).toBe(1);
-  });
-});
-
-describe("permission options and outcomes", () => {
-  it("maps options to outcomes", () => {
-    expect(outcomeForOption({ id: "a", kind: "allow-once", label: "once" })).toBe("allowed-once");
-    expect(outcomeForOption({ id: "b", kind: "allow-always", label: "always", scope: "session" })).toBe(
-      "allowed-for-session",
-    );
-    expect(outcomeForOption({ id: "c", kind: "reject", label: "no" })).toBe("rejected");
-  });
-
-  it("detects offered allow-always", () => {
-    expect(offersAllowAlways([{ id: "a", kind: "allow-once", label: "once" }])).toBe(false);
-    expect(
-      offersAllowAlways([{ id: "b", kind: "allow-always", label: "always", scope: "session" }]),
-    ).toBe(true);
-  });
-});
-
-describe("bounded event log", () => {
-  it("drops the oldest events past the cap", () => {
-    const log = new BoundedEventLog({ maxEvents: 2 });
-    log.push({ type: "assistant-delta", delta: "one" });
-    log.push({ type: "assistant-delta", delta: "two" });
-    log.push({ type: "assistant-delta", delta: "three" });
-    expect(log.size).toBe(2);
-    expect(log.dropped).toBe(1);
-    expect(log.events()).toEqual([
-      { type: "assistant-delta", delta: "two" },
-      { type: "assistant-delta", delta: "three" },
-    ]);
-  });
-
-  it("truncates oversized strings at code-point boundaries", () => {
-    const log = new BoundedEventLog({ maxCharsPerString: 2 });
-    log.push({ type: "assistant-delta", delta: "abc" });
-    log.push({ type: "plan-update", plan: ["abcdef"] });
-    log.push({ type: "notice", level: "warning", message: "\u{1F600}xyz" });
-    const stored = log.events();
-    expect(stored[0]).toEqual({ type: "assistant-delta", delta: "ab" });
-    expect(stored[1]).toEqual({ type: "plan-update", plan: ["ab"] });
-    expect(stored[2]).toEqual({ type: "notice", level: "warning", message: "\u{1F600}x" });
-  });
-
-  it("leaves numeric usage events intact", () => {
-    const log = new BoundedEventLog({ maxCharsPerString: 0 });
-    log.push({ type: "usage", inputTokens: 7, outputTokens: 8 });
-    expect(log.events()).toEqual([{ type: "usage", inputTokens: 7, outputTokens: 8 }]);
-  });
-});
+  it('drops oldest bounded events and preserves multibyte boundaries', () => {
+    const log = new BoundedEventLog({ maxEvents: 2, maxTextBytes: 5, maxPayloadBytes: 256 })
+    log.push({ type: 'assistant-delta', text: '😀😀😀' })
+    log.push({ type: 'assistant-delta', text: 'two' })
+    log.push({ type: 'assistant-delta', text: 'three' })
+    expect(log.events()).toHaveLength(2)
+    expect(log.events()[0]).toEqual({ type: 'assistant-delta', text: 'two' })
+    expect(log.droppedCount).toBe(1)
+  })
+})

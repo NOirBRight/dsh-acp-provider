@@ -1,18 +1,12 @@
-# @deepseek-ai/dsh-external-agent
+# @deepseek-ai/dsh-acp-provider
 
-Provider-neutral External Agent platform seam for DSH (issue #1 MVP).
+Provider-neutral External Agent platform for DeepSeek Harness.
 
-Independently installed provider plugins register models, open native
-sessions, run complete native turns, and emit provider-neutral activity.
-DSH-side primary-session and subagent consumers share the same provider
-interface. Raw LLM routes and external-agent routes stay distinct; model
-selection is explicit (`llm:model`, `external-agent:provider/model`) with
-exact resolution and no silent fallback.
+Providers register exact model routes, open provider-owned sessions, run complete native turns, and publish provider-neutral activity. Primary-session and subagent consumers use the same session contract; raw LLM routes remain distinct from external-agent:provider/model routes.
 
-Dependency-free ESM TypeScript. No ACP, subprocess, auth, filesystem,
-UI, or DSH core imports.
+The package is dependency-free ESM TypeScript. ACP transport, subprocesses, authentication, filesystem mediation, and provider-specific Settings editors belong to provider packages.
 
-## Install / checks
+## Install and verify
 
 ```sh
 pnpm install
@@ -21,58 +15,40 @@ pnpm run test
 pnpm run build
 ```
 
-## Use
+## Minimal provider usage
 
 ```ts
-import {
-  ExternalAgentProviderRegistry,
-  FakeExternalAgentProvider,
-  BoundedEventLog,
-  parseRouteSpecifier,
-} from "@deepseek-ai/dsh-external-agent";
+import { ExternalAgentProviderRegistry, BoundedEventLog, parseRouteSpecifier, sessionId, turnId } from "@deepseek-ai/dsh-acp-provider"
+import { FakeExternalAgentProvider } from "@deepseek-ai/dsh-acp-provider/fake"
 
-const registry = new ExternalAgentProviderRegistry();
-const provider = new FakeExternalAgentProvider("acme", [
-  { id: "coder", supportedModes: ["approval-required", "auto-accept-edits"] },
-]);
-const unregister = registry.register(provider); // throws DuplicateProviderError on clash
-const route = parseRouteSpecifier("external-agent:acme/coder");
-await registry.resolveExternalRoute("acme", "coder"); // exact, throws RouteResolutionError
-
-const session = provider.openSession({ model: "coder" });
-const log = new BoundedEventLog({ maxEvents: 500 });
-const controller = new AbortController();
-const result = await session.runTurn({
-  prompt: "fix the failing test",
-  mode: "approval-required",
-  signal: controller.signal, // pre-aborted => { status: "cancelled" }, no execution
-  onEvent: (event) => log.push(event),
-  onPermission: async () => "allowed-once", // fail closed on abort/settle
-  onUserInput: async () => ({ status: "unavailable" }),
-});
-await session.dispose(); // idempotent
-unregister(); // HMR / shutdown removal
+const registry = new ExternalAgentProviderRegistry()
+const provider = new FakeExternalAgentProvider('acme', [{ id: 'coder', supportedModes: ['approval-required'] }])
+const unregister = registry.register(provider)
+const route = parseRouteSpecifier('external-agent:acme/coder')
+const session = await registry.openSession({ route, session: sessionId('dsh-session'), permissionMode: 'approval-required' })
+const log = new BoundedEventLog()
+const controller = new AbortController()
+const result = await session.runTurn({ turn: turnId('turn-1'), prompt: 'inspect the failing test', permissionMode: 'approval-required', signal: controller.signal }, {
+  publish: event => log.push(event),
+  requestPermission: async request => ({ kind: 'allow-once', optionId: request.options[0].optionId }),
+  requestUserInput: async () => ({ answers: [] }),
+})
+await session.dispose()
+await unregister()
 ```
 
-## Rules the seam enforces
+## Runtime rules
 
-- One provider name per registry; disposal removes exactly its own row.
-- Unknown provider/model/mode is an explicit error, never a fallback.
-- One turn owns its host; retained hosts throw `HostExpiredError` after settle.
-- Aborted turns fail closed: pending permission/input rejects, never approves.
-- `allow-always` appears only when the native provider offers it, carries a
-  `session`/`thread` scope label, and is enforced by the native session —
-  DSH records it but never replays it onto a replacement session.
-- Full access selects the highest native permission mode; it does not answer
-  user questions or bypass host filesystem policy.
-- Native tool activity is already-executed work; consumers must never
-  translate it into a DSH tool call.
-- Zero automatic retries for effectful turns; transport failures propagate.
-- `BoundedEventLog` truncates strings at code-point boundaries and drops
-  oldest-first past the cap.
+- Provider and model resolution is exact; unknown routes and unsupported permission modes fail explicitly.
+- Every turn receives an expiring host. Aborts and settlement reject later provider permission or question requests.
+- Native allow_always options retain their exact id and carry only a native session or thread scope. DSH never replays them from old logs.
+- Full access requires explicit confirmation and a value-free audit record before the provider starts.
+- Native tool activity is already-executed work; consumers publish it and never execute it again as a DSH tool call.
+- Host filesystem callbacks remain DSH-owned; providers that expose ACP file methods must supply an operation-aware canonical-path resolver.
+- Effectful turns have no automatic retry. Event and interaction payloads have configurable byte and count bounds.
 
-## What is out of scope
+## DSH integration
 
-Concrete providers (Antigravity/Cursor/Claude Code live in separate repos),
-ACP transports, auth, filesystem mediation, Settings UI, DSH Session
-projection, thread browsing/rollback, and out-of-band events after a turn.
+The bridge/ directory contains an out-of-tree composition probe and adapter contract. It fails loudly when the installed DSH checkout does not expose the required route, turn-driver, session-event, interaction, and Settings hooks; it does not pretend that an unavailable host seam is integrated.
+
+Concrete providers are separate packages. The Antigravity ACP provider uses the official @agentclientprotocol/sdk, an explicitly configured Google executable pair, a private OAuth profile, and host-owned filesystem mediation.

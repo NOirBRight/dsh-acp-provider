@@ -1,28 +1,25 @@
-# Agent Note: external-agent platform MVP (issue #1)
+# Agent Note: external-agent platform (issue #1)
 
 ## Decision
 
-Ship the provider-neutral seam as a standalone dependency-free package
-(`@deepseek-ai/dsh-external-agent`, `src/index.ts`): registry with
-duplicate rejection and idempotent disposers, exact route resolution
-(`llm:` / `external-agent:` specifiers), `ManagedExternalAgentSession`
-owning abort-before-run, advertised-mode checks, disposal, and turn-host
-expiry, request/response permission and user-input round trips, canonical
-activity events, and a bounded event log. A scripted `FakeExternalAgentProvider`
-is the principal test double.
+The provider-neutral External Agent platform is implemented as @deepseek-ai/dsh-acp-provider. The package owns exact llm: and external-agent:provider/model routes, provider registration, provider-owned sessions, turn-scoped hosts, permission and user-input round trips, canonical bounded activity, full-access confirmation and audit, filesystem request contracts, and quiescent disposal.
 
-## Why this cut
+Primary-session and subagent consumers share the session contract. Provider cursors are scoped by provider and route; primary route changes close the native session and retain only its resume cursor. Native tool activity is published and is never re-executed by DSH.
 
-Issue #1 spans platform, two consumers, Settings, and DSH host integration.
-The seam is the part every later piece compiles against, and it is verifiable
-without ACP, subprocesses, or DSH core. Consumers, Settings, and host
-integration follow in later issues against this frozen surface.
+## Why this boundary
 
-## Deferred (not dropped)
+The platform has no ACP, subprocess, authentication, filesystem implementation, Settings UI, or DSH core dependency. Concrete providers can select their transport and credential policy while the host keeps route selection, interaction authority, audit, and lifecycle ownership.
 
-- Primary-session and subagent consumers over the same interface.
-- Settings External Agents page plus provider-owned editor containers.
-- DSH host turn-driver extension dispatching `external-agent` routes.
-- Native allow-always replay prohibition is documented; enforcement sits with
-  the native session, so the consumer-side guard lands with the primary
-  consumer (it owns interaction authority).
+## Alternatives considered
+
+- Embedding ACP and process management in the platform would couple every provider to one transport and credential model.
+- Adding a Cordis peer without importing Cordis would advertise a binding the package does not use.
+- Keeping provider sessions parked across route changes would retain native permission state and grow unbounded session resources.
+
+## Integration limit
+
+The current DSH checkout does not expose the primary external-agent turn-driver, session-event, agentless interaction, and Settings mounting hooks. bridge/ contains an executable adapter contract and a blocked-composition probe; it fails loudly instead of presenting a partial in-tree integration.
+
+## Verification
+
+Platform typecheck, unit tests, and declaration build cover exact routing, managed-session lifetime, interaction expiry, bounded events, registry disposal, consumers, Settings snapshots, and filesystem containment.
