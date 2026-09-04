@@ -18,7 +18,6 @@ import {
   type ExternalAgentTurnId,
   type ExternalAgentTurnRequest,
   type ExternalAgentTurnResult,
-  type ExternalAgentUserInputAnswers,
   type ExternalAgentUserInputRequest,
   type SessionModelRoute,
   turnId,
@@ -70,6 +69,34 @@ interface PrimarySlot {
   cursor?: ExternalAgentResumeCursor
 }
 
+function createConsumerTurnHost(host: ExternalAgentTurnHostCallbacks, emit: (event: ExternalAgentConsumerEvent) => void | Promise<void>): ExternalAgentTurnHostCallbacks {
+  return {
+    publish: event => Promise.resolve(emit({ type: 'activity', event })),
+    requestPermission: async request => {
+      await emit({ type: 'permission-pending', request })
+      try {
+        const decision = await host.requestPermission(request)
+        await emit({ type: 'permission-committed', requestId: request.requestId, outcome: decision.kind })
+        return decision
+      } catch (error) {
+        await emit({ type: 'permission-committed', requestId: request.requestId, outcome: 'unavailable' })
+        throw error
+      }
+    },
+    requestUserInput: async request => {
+      await emit({ type: 'question-pending', request })
+      try {
+        const answer = await host.requestUserInput(request)
+        await emit({ type: 'question-committed', requestId: request.requestId, answers: answer.answers })
+        return answer
+      } catch (error) {
+        await emit({ type: 'question-committed', requestId: request.requestId, answers: [] })
+        throw error
+      }
+    },
+  }
+}
+
 function openRequestExtras(request: Pick<ExternalAgentOpenRequest, 'clientFilesystem' | 'fullAccessConfirmed' | 'fullAccessAuditId'>): Pick<ExternalAgentOpenRequest, 'clientFilesystem' | 'workspaceRoot' | 'attachmentRoots' | 'fullAccessConfirmed' | 'fullAccessAuditId'> {
   return {
     ...(request.clientFilesystem === undefined ? {} : { clientFilesystem: request.clientFilesystem, ...(request.clientFilesystem.workspaceRoots[0] === undefined ? {} : { workspaceRoot: request.clientFilesystem.workspaceRoots[0] }), attachmentRoots: request.clientFilesystem.attachmentRoots }),
@@ -85,6 +112,7 @@ function openRequestExtras(request: Pick<ExternalAgentOpenRequest, 'clientFilesy
 export class ExternalAgentPrimaryConsumer {
   private readonly slots = new Map<string, PrimarySlot>()
   private active: { readonly controller: AbortController; readonly promise: Promise<ExternalAgentTurnResult> } | undefined
+  private preparing = false
   private selected: SessionModelRoute | undefined
   private disposed = false
 
@@ -112,6 +140,9 @@ export class ExternalAgentPrimaryConsumer {
     this.assertLive()
     if (request.route.kind !== 'external-agent') throw new RouteResolutionError('primary consumer requires an external-agent route')
     if (request.signal.aborted) return { status: 'cancelled', text: '' }
+    if (this.preparing) throw new Error('primary external-agent turn is already preparing')
+    this.preparing = true
+    try {
     if (this.active !== undefined) {
       if (this.sameRoute(this.selected, request.route)) throw new Error('primary external-agent turn is already active')
       await this.cancelActive()
@@ -131,37 +162,13 @@ export class ExternalAgentPrimaryConsumer {
       signal: controller.signal,
     }
     const emit = (event: ExternalAgentConsumerEvent): void | Promise<void> => request.onSessionEvent?.(event)
-    const callbacks: ExternalAgentTurnHostCallbacks = {
-      publish: event => {
-        const activity = emit({ type: 'activity', event })
-        return Promise.resolve(activity)
-      },
-      requestPermission: async permission => {
-        await emit({ type: 'permission-pending', request: permission })
-        let decision: ExternalAgentPermissionDecision
-        try { decision = await request.host.requestPermission(permission) } catch (error) {
-          await emit({ type: 'permission-committed', requestId: permission.requestId, outcome: 'unavailable' })
-          throw error
-        }
-        await emit({ type: 'permission-committed', requestId: permission.requestId, outcome: decision.kind })
-        return decision
-      },
-      requestUserInput: async question => {
-        await emit({ type: 'question-pending', request: question })
-        let answer: ExternalAgentUserInputAnswers
-        try { answer = await request.host.requestUserInput(question) } catch (error) {
-          await emit({ type: 'question-committed', requestId: question.requestId, answers: [] })
-          throw error
-        }
-        await emit({ type: 'question-committed', requestId: question.requestId, answers: answer.answers })
-        return answer
-      },
-    }
+    const callbacks = createConsumerTurnHost(request.host, emit)
     await emit({ type: 'turn-started', turn: effectiveRequest.turn, route: request.route })
     const session = slot.session
     if (session === undefined) throw new Error('primary external-agent session was disposed before turn start')
     const promise = session.runTurn(effectiveRequest, callbacks)
     this.active = { controller, promise }
+    this.preparing = false
     try {
       const result = await promise
       if (result.resumeCursor !== undefined) slot.cursor = result.resumeCursor
@@ -171,6 +178,7 @@ export class ExternalAgentPrimaryConsumer {
       request.signal.removeEventListener('abort', forwardAbort)
       if (this.active?.promise === promise) this.active = undefined
     }
+    } finally { this.preparing = false }
   }
 
   /** Cancel one active turn and wait for provider quiescence. */
@@ -276,8 +284,12 @@ export class ExternalAgentSubagentConsumer {
     const forward = (): void => controller.abort()
     request.signal?.addEventListener('abort', forward, { once: true })
     let session: ExternalAgentSession | undefined
+    const turn = turnId(request.jobId)
+    const emit = (event: ExternalAgentConsumerEvent): void | Promise<void> => request.onSessionEvent?.(event)
     try {
       if (request.signal?.aborted) controller.abort()
+      await emit({ type: 'route-selected', route: request.route })
+      await emit({ type: 'turn-started', turn, route: request.route })
       session = await this.registry.openSession({
         route: request.route,
         session: request.parentSession,
@@ -285,11 +297,15 @@ export class ExternalAgentSubagentConsumer {
         ...openRequestExtras(request),
         signal: controller.signal,
       })
-      const result = await session.runTurn({ turn: turnId(request.jobId), prompt: request.prompt, ...(request.attachments === undefined ? {} : { attachments: request.attachments }), permissionMode: request.permissionMode, signal: controller.signal }, request.host)
-      await request.onSessionEvent?.({ type: 'subagent-result', jobId: request.jobId, result })
+      const result = await session.runTurn({ turn, prompt: request.prompt, ...(request.attachments === undefined ? {} : { attachments: request.attachments }), permissionMode: request.permissionMode, signal: controller.signal }, createConsumerTurnHost(request.host, emit))
+      await emit({ type: 'turn-finished', turn, result })
+      await emit({ type: 'subagent-result', jobId: request.jobId, result })
       return result
     } catch (error) {
-      if (controller.signal.aborted) return { status: 'cancelled', text: '' }
+      const result: ExternalAgentTurnResult = controller.signal.aborted ? { status: 'cancelled', text: '' } : { status: 'failed', text: '', error: 'external-agent subagent failed' }
+      await emit({ type: 'turn-finished', turn, result })
+      await emit({ type: 'subagent-result', jobId: request.jobId, result })
+      if (controller.signal.aborted) return result
       throw error
     } finally {
       request.signal?.removeEventListener('abort', forward)

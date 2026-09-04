@@ -172,15 +172,35 @@ describe('external-agent platform', () => {
     await consumer.dispose()
   })
 
+  it('rejects a concurrent turn while the first turn is preparing', async () => {
+    const provider = new FakeExternalAgentProvider('serial', [{ id: 'coder', supportedModes: modes }], { scripts: [{ result: { text: 'done' } }] })
+    const registry = new ExternalAgentProviderRegistry()
+    registry.register(provider)
+    const consumer = new ExternalAgentPrimaryConsumer(registry)
+    let entered!: () => void
+    let release!: () => void
+    const preparing = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const request = { session: sessionId('serial'), route: route('serial'), prompt: 'go', permissionMode: 'approval-required' as const, signal: new AbortController().signal, host: host(), onSessionEvent: async (event: ExternalAgentConsumerEvent) => { if (event.type === 'route-selected') { entered(); await gate } } }
+    const first = consumer.runTurn(request)
+    await preparing
+    await expect(consumer.runTurn(request)).rejects.toThrow(/preparing/)
+    release()
+    await expect(first).resolves.toMatchObject({ status: 'completed' })
+    await consumer.dispose()
+  })
+
   it('disposes subagent sessions for foreground and background runs', async () => {
-    const provider = new FakeExternalAgentProvider('worker', [{ id: 'coder', supportedModes: modes }], { scripts: [{ result: { text: 'foreground' } }, { result: { text: 'background' } }] })
+    const provider = new FakeExternalAgentProvider('worker', [{ id: 'coder', supportedModes: modes }], { scripts: [{ events: [{ type: 'assistant-delta', text: 'working' }], result: { text: 'foreground' } }, { result: { text: 'background' } }] })
     const registry = new ExternalAgentProviderRegistry()
     registry.register(provider)
     const consumer = new ExternalAgentSubagentConsumer(registry)
-    const base = { parentSession: sessionId('parent'), route: route('worker'), prompt: 'work', permissionMode: 'approval-required' as const, host: host(), jobId: jobId('job-1') }
+    const events: string[] = []
+    const base = { parentSession: sessionId('parent'), route: route('worker'), prompt: 'work', permissionMode: 'approval-required' as const, host: host(), jobId: jobId('job-1'), onSessionEvent: (event: ExternalAgentConsumerEvent) => { events.push(event.type) } }
     expect((await consumer.runForeground(base)).text).toBe('foreground')
     const job = consumer.startBackground({ ...base, jobId: jobId('job-2') })
     expect((await job.result).text).toBe('background')
+    expect(events).toEqual(expect.arrayContaining(['route-selected', 'turn-started', 'activity', 'turn-finished', 'subagent-result']))
     await consumer.dispose()
   })
 

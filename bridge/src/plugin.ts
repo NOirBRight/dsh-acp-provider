@@ -48,6 +48,10 @@ function assertConfigRoute(route: BridgeRouteConfig): void {
   if (route.kind !== 'llm' && route.kind !== 'external-agent') {
     throw new TypeError('dsh-bridge: config route "' + route.id + '" needs kind "llm" or "external-agent"');
   }
+  for (const model of route.models) {
+    if (typeof model.id !== 'string' || model.id.length === 0) throw new TypeError('dsh-bridge: model id must be a non-empty string');
+    if (typeof model.name !== 'string' || model.name.length === 0) throw new TypeError('dsh-bridge: model name must be a non-empty string');
+  }
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createBridge, probeBridgeHost, REQUIRED_HOST_PATHS } from '../lib/index.js';
+import { apply, createBridge, probeBridgeHost, REQUIRED_HOST_PATHS } from '../lib/index.js';
 
 /** Minimal in-memory BridgeHost: the fake the bridge mounts against. */
 function fakeHost(overrides = {}) {
@@ -69,6 +69,11 @@ describe('directory contribution with explicit route kind', () => {
     assert.equal(host.directory.list()[1].kind, 'llm');
     bridge.dispose();
     assert.deepEqual(host.directory.list(), []);
+  });
+
+  it('rejects invalid configured model identifiers before probing the host', () => {
+    assert.throws(() => apply({}, { routes: [{ id: 'agy', displayName: 'Agy', kind: 'external-agent', models: [{ id: '', name: 'Agy' }] }] }), /model id/);
+    assert.throws(() => apply({}, { routes: [{ id: 'agy', displayName: 'Agy', kind: 'external-agent', models: [{ id: 'default', name: '' }] }] }), /model name/);
   });
 
   it('rejects an external-agent route with no models', () => {

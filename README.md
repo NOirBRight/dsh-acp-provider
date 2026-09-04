@@ -45,7 +45,7 @@ await unregister()
 - Full access requires explicit confirmation and a value-free audit record before the provider starts.
 - Native tool activity is already-executed work; consumers publish it and never execute it again as a DSH tool call.
 - Host filesystem callbacks remain DSH-owned; providers that expose ACP file methods must supply an operation-aware canonical-path resolver.
-- Effectful turns have no automatic retry. Event and interaction payloads have configurable byte and count bounds.
+- Effectful turns have no automatic retry. Primary turn setup is serialized, and both consumer roles log route selection, turn lifecycle, activity, and interaction state. Event and interaction payloads have configurable byte and count bounds.
 
 ## DSH integration
 
