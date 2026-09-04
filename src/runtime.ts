@@ -162,7 +162,13 @@ export class ExternalAgentProviderRegistry {
       await session.dispose()
       throw new RouteResolutionError('external-agent provider was disposed while opening a session: ' + route.provider)
     }
-    sessions.add(session)
-    return session
+    const tracked: ExternalAgentSession = {
+      ref: session.ref,
+      supportedModes: session.supportedModes,
+      runTurn: (turnRequest, turnHost) => session.runTurn(turnRequest, turnHost),
+      dispose: async () => { try { await session.dispose() } finally { sessions.delete(tracked) } },
+    }
+    sessions.add(tracked)
+    return tracked
   }
 }

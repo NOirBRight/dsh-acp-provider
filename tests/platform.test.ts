@@ -62,6 +62,26 @@ describe('external-agent platform', () => {
     expect(registry.get('')).toBeUndefined()
   })
 
+  it('releases a disposed session from registry ownership', async () => {
+    let disposeCalls = 0
+    const provider = {
+      info: { id: providerId('tracked'), name: 'Tracked' },
+      listModels: async () => [{ id: route('tracked').model, name: 'Coder', supportedModes: modes }],
+      openSession: async () => ({
+        ref: { provider: providerId('tracked'), session: sessionId('session-1') },
+        supportedModes: modes,
+        runTurn: async () => ({ status: 'completed' as const, text: '' }),
+        dispose: async () => { disposeCalls += 1 },
+      }),
+    }
+    const registry = new ExternalAgentProviderRegistry()
+    const remove = registry.register(provider)
+    const session = await registry.openSession(openRequest('tracked'))
+    await session.dispose()
+    await remove()
+    expect(disposeCalls).toBe(1)
+  })
+
   it('rejects unscoped allow-always outcomes by name', () => {
     expect(() => outcomeForOption({ optionId: optionId('native'), kind: 'allow_always', label: 'Always' })).toThrow(UnscopedAllowAlwaysError)
   })
