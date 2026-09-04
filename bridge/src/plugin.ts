@@ -47,8 +47,8 @@ function assertConfigRoute(route: BridgeRoute): void {
   if (typeof route.id !== 'string' || route.id.length === 0) {
     throw new TypeError('dsh-bridge: config route id must be a non-empty string');
   }
-  if (route.kind !== 'model' && route.kind !== 'external-turn') {
-    throw new TypeError('dsh-bridge: config route "' + route.id + '" needs kind "model" or "external-turn"');
+  if (route.kind !== 'llm' && route.kind !== 'external-agent') {
+    throw new TypeError('dsh-bridge: config route "' + route.id + '" needs kind "llm" or "external-agent"');
   }
 }
 

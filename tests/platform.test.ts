@@ -12,6 +12,7 @@ import {
   boundExternalAgentEvent,
   createExternalAgentTurnHost,
   createSessionModelRoute,
+  jobId,
   offersAllowAlways,
   optionId,
   outcomeForOption,
@@ -139,7 +140,7 @@ describe('external-agent platform', () => {
     registry.register(first); registry.register(second)
     const consumer = new ExternalAgentPrimaryConsumer(registry)
     const sessionEvents: string[] = []
-    const request = (provider: string, turn: string) => ({ session: sessionId('primary'), route: route(provider), turn, prompt: 'go', permissionMode: 'approval-required' as const, signal: new AbortController().signal, host: { publish: (): void => undefined, requestPermission: async (req: ExternalAgentPermissionRequest) => ({ kind: 'allow-once' as const, optionId: req.options[0].optionId }), requestUserInput: async () => ({ answers: [] }) }, onSessionEvent: (event: ExternalAgentConsumerEvent) => { sessionEvents.push(event.type) } })
+    const request = (provider: string, turn: string) => ({ session: sessionId('primary'), route: route(provider), turn: turnId(turn), prompt: 'go', permissionMode: 'approval-required' as const, signal: new AbortController().signal, host: { publish: (): void => undefined, requestPermission: async (req: ExternalAgentPermissionRequest) => ({ kind: 'allow-once' as const, optionId: req.options[0].optionId }), requestUserInput: async () => ({ answers: [] }) }, onSessionEvent: (event: ExternalAgentConsumerEvent) => { sessionEvents.push(event.type) } })
     expect((await consumer.runTurn(request('one', 't1'))).text).toBe('one')
     expect((await consumer.runTurn(request('two', 't2'))).text).toBe('two')
     expect(sessionEvents).toEqual(expect.arrayContaining(['permission-pending', 'permission-committed', 'turn-finished']))
@@ -151,9 +152,9 @@ describe('external-agent platform', () => {
     const registry = new ExternalAgentProviderRegistry()
     registry.register(provider)
     const consumer = new ExternalAgentSubagentConsumer(registry)
-    const base = { parentSession: sessionId('parent'), route: route('worker'), prompt: 'work', permissionMode: 'approval-required' as const, host: host(), jobId: 'job-1' }
+    const base = { parentSession: sessionId('parent'), route: route('worker'), prompt: 'work', permissionMode: 'approval-required' as const, host: host(), jobId: jobId('job-1') }
     expect((await consumer.runForeground(base)).text).toBe('foreground')
-    const job = consumer.startBackground({ ...base, jobId: 'job-2' })
+    const job = consumer.startBackground({ ...base, jobId: jobId('job-2') })
     expect((await job.result).text).toBe('background')
     await consumer.dispose()
   })
@@ -171,7 +172,7 @@ describe('external-agent platform', () => {
     const registry = new ExternalAgentProviderRegistry()
     registry.register(provider)
     const consumer = new ExternalAgentPrimaryConsumer(registry)
-    const makeRequest = (model: string, turn: string) => ({ session: sessionId('primary-cursor'), route: route('cursor', model), turn, prompt: 'go', permissionMode: 'approval-required' as const, signal: new AbortController().signal, host: host() })
+    const makeRequest = (model: string, turn: string) => ({ session: sessionId('primary-cursor'), route: route('cursor', model), turn: turnId(turn), prompt: 'go', permissionMode: 'approval-required' as const, signal: new AbortController().signal, host: host() })
     await consumer.runTurn(makeRequest('coder', 'one'))
     await consumer.selectRoute(route('cursor', 'reviewer'))
     expect(disposed).toBe(1)
@@ -189,7 +190,7 @@ describe('external-agent platform', () => {
     const registry = new ExternalAgentProviderRegistry()
     registry.register(provider)
     const consumer = new ExternalAgentSubagentConsumer(registry)
-    const job = consumer.startBackground({ jobId: 'slow-job', parentSession: sessionId('parent'), route: route('slow-worker'), prompt: 'wait', permissionMode: 'approval-required', host: host() })
+    const job = consumer.startBackground({ jobId: jobId('slow-job'), parentSession: sessionId('parent'), route: route('slow-worker'), prompt: 'wait', permissionMode: 'approval-required', host: host() })
     await consumer.dispose()
     await expect(job.result).resolves.toMatchObject({ status: 'cancelled' })
   })

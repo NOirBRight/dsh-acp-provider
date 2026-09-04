@@ -5,7 +5,6 @@ import { createBridge, probeBridgeHost, REQUIRED_HOST_PATHS } from '../lib/index
 /** Minimal in-memory BridgeHost: the fake the bridge mounts against. */
 function fakeHost(overrides = {}) {
   const routes = new Map();
-  const listeners = new Set();
   const events = new Map();
   let primary = undefined;
   const host = {
@@ -26,10 +25,6 @@ function fakeHost(overrides = {}) {
     },
     sessions: {
       read(sessionId) { return events.get(sessionId) ?? []; },
-      onEvent(listener) {
-        listeners.add(listener);
-        return () => { listeners.delete(listener); };
-      },
     },
     interaction: {
       async requestApproval(request) {
@@ -45,7 +40,6 @@ function fakeHost(overrides = {}) {
       const list = events.get(sessionId) ?? [];
       list.push(event);
       events.set(sessionId, list);
-      for (const listener of listeners) listener(sessionId, event);
     },
     get primary() { return primary; },
     lastApproval: undefined,
@@ -56,8 +50,8 @@ function fakeHost(overrides = {}) {
 }
 
 const ROUTES = [
-  { id: 'codex', displayName: 'Codex', kind: 'external-turn', models: [{ id: 'gpt-5', name: 'GPT-5' }] },
-  { id: 'deepseek', displayName: 'DeepSeek', kind: 'model', models: [{ id: 'deepseek-chat', name: 'Chat' }] },
+  { id: 'codex', displayName: 'Codex', kind: 'external-agent', models: [{ id: 'gpt-5', name: 'GPT-5' }] },
+  { id: 'deepseek', displayName: 'DeepSeek', kind: 'llm', models: [{ id: 'deepseek-chat', name: 'Chat' }] },
 ];
 
 const runner = {
@@ -71,16 +65,16 @@ describe('directory contribution with explicit route kind', () => {
     const host = fakeHost();
     const bridge = createBridge(host, { routes: ROUTES, runner });
     assert.deepEqual(host.directory.list(), ROUTES);
-    assert.equal(host.directory.list()[0].kind, 'external-turn');
-    assert.equal(host.directory.list()[1].kind, 'model');
+    assert.equal(host.directory.list()[0].kind, 'external-agent');
+    assert.equal(host.directory.list()[1].kind, 'llm');
     bridge.dispose();
     assert.deepEqual(host.directory.list(), []);
   });
 
-  it('rejects an external-turn route with no models', () => {
+  it('rejects an external-agent route with no models', () => {
     const host = fakeHost();
     assert.throws(
-      () => createBridge(host, { routes: [{ id: 'x', displayName: 'X', kind: 'external-turn', models: [] }], runner }),
+      () => createBridge(host, { routes: [{ id: 'x', displayName: 'X', kind: 'external-agent', models: [] }], runner }),
       /at least one model/,
     );
   });
@@ -95,7 +89,7 @@ describe('directory contribution with explicit route kind', () => {
 });
 
 describe('primary turn-driver dispatch', () => {
-  it('drives external-turn routes through the runner, leaves model routes alone', async () => {
+  it('drives external-agent routes through the runner, leaves LLM routes alone', async () => {
     const host = fakeHost();
     const bridge = createBridge(host, { routes: ROUTES, runner });
     const external = await host.primary.drive({ sessionId: 's1', routeId: 'codex', model: 'gpt-5', prompt: 'hi' });
@@ -103,7 +97,11 @@ describe('primary turn-driver dispatch', () => {
     // Same drive path via the bridge handle.
     const viaBridge = await bridge.drive({ sessionId: 's1', routeId: 'codex', model: 'gpt-5', prompt: 'hi' });
     assert.deepEqual(viaBridge, external);
-    // Model-kind and unknown routes are not driven: no LlmAdapter, no subagent start.
+    assert.deepEqual(
+      await bridge.drive({ sessionId: 's1', routeId: 'codex', model: 'unknown', prompt: 'hi' }),
+      { handled: true, result: { stopReason: 'error', outputText: '', diagnostic: 'dsh-bridge: model \"unknown\" is not advertised by route \"codex\"' } },
+    );
+    // LLM-kind and unknown routes are not driven: no LlmAdapter, no subagent start.
     assert.deepEqual(
       await bridge.drive({ sessionId: 's1', routeId: 'deepseek', model: 'deepseek-chat', prompt: 'hi' }),
       { handled: false },
@@ -147,20 +145,13 @@ describe('primary turn-driver dispatch', () => {
 });
 
 describe('session event projection', () => {
-  it('folds stored events and follows only the subscribed session', () => {
+  it('folds only stored events from the requested session', () => {
     const host = fakeHost();
     const bridge = createBridge(host, { routes: ROUTES, runner });
     host.emit('s1', { type: 'user/message', seq: 0, data: {} });
     host.emit('s1', { type: 'assistant/message', seq: 1, data: {} });
     host.emit('s2', { type: 'user/message', seq: 0, data: {} });
-    const count = bridge.project('s1', 0, (n) => n + 1);
-    assert.equal(count, 2);
-    const seen = [];
-    const stop = bridge.follow('s1', (event) => seen.push(event));
-    host.emit('s1', { type: 'step/end', seq: 2, data: {} });
-    host.emit('s2', { type: 'step/end', seq: 1, data: {} });
-    assert.deepEqual(seen, [{ type: 'step/end', seq: 2, data: {} }]);
-    stop();
+    assert.equal(bridge.project('s1', 0, (n) => n + 1), 2);
     bridge.dispose();
   });
 });

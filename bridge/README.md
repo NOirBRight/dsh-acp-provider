@@ -18,10 +18,10 @@ contract required upstream; it does not duplicate the provider seam
 Given a BridgeHost and a deployment runner, the bridge:
 
 - contributes routes to the model directory with an explicit
-  BridgeRouteKind ('model' | 'external-turn');
-- dispatches as the primary turn driver for external-turn routes only,
+  BridgeRouteKind ('llm' | 'external-agent');
+- dispatches as the primary turn driver for external-agent routes only,
   without a synthetic LlmAdapter and without ctx.subagents.start;
-- projects session events (read/fold and per-session follow);
+- projects stored session events with a bounded turn-scoped read/fold;
 - delegates approval and user questions agentlessly to the host;
 - unwinds every registration through dispose.
 
@@ -44,7 +44,7 @@ Verified read-only against the DSH source (0.1.1-rc.1):
   and UserQuestionService.ask rejects DELEGATED_CALLER for owned
   children and NO_PROVIDER without a UI provider
   (packages/interaction/user-questions/src/index.ts).
-- session log has no external-turn vocabulary. KNOWN_SESSION_EVENT_TYPES
+- session log has no external-agent vocabulary. KNOWN_SESSION_EVENT_TYPES
   (packages/core/session/src/known-event-types.ts) admits no external
   event; an out-of-repo plugin event is outside the list by
   construction ('a registration surface for them is deferred until
@@ -63,7 +63,7 @@ Verified read-only against the DSH source (0.1.1-rc.1):
    kind + model catalog), read by session.models / session.selectModel.
 2. A primary turn-driver dispatch slot consulted before the loop for
    external-kind selections (replacing a synthetic LlmAdapter).
-3. An external-turn session event (or a real out-of-repo registration
+3. An external-agent session event (or a real out-of-repo registration
    surface) so delegated prompts and results are log-reconstructable.
 4. Agentless approval/question delegation for externally driven turns.
 5. Session-scoped routable reporting that understands external kinds.
@@ -76,20 +76,20 @@ import { createBridge, probeBridgeHost } from 'dsh-bridge';
 const probe = probeBridgeHost(host);
 if (!probe.ok) throw new Error('blocked: missing ' + probe.missing.join(', '));
 const bridge = createBridge(host, { routes, runner });
-// ... bridge.drive / project / follow / requestApproval / askUser ...
+// ... bridge.drive / project / requestApproval / askUser ...
 bridge.dispose();
 ```
 
 cordis.patch.yml mounts the bridge as one optional row (routes: [] by
 default; loading it starts nothing). Config validation lives in code:
-non-empty ids, known kinds, at least one model per external-turn
+non-empty ids, known kinds, at least one model per external-agent
 route, duplicate rejection.
 
 ## Layout
 
 - src/contracts.ts: BridgeHost, route/turn/approval vocabulary.
 - src/current-dsh.ts: probeBridgeHost + REQUIRED_HOST_PATHS.
-- src/bridge.ts: createBridge (register, drive, project, follow,
+- src/bridge.ts: createBridge (register, drive, project,
   delegate, dispose).
 - tests/bridge.test.js: 10 public-behavior tests against the fake
   host, including the blocked-DSH composition case.

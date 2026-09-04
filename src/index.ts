@@ -18,6 +18,8 @@ export type ExternalAgentModelId = Branded<string, 'ExternalAgentModelId'>
 export type ExternalAgentSessionId = Branded<string, 'ExternalAgentSessionId'>
 /** Provider turn identifier. */
 export type ExternalAgentTurnId = Branded<string, 'ExternalAgentTurnId'>
+/** External-agent subagent job identifier. */
+export type ExternalAgentJobId = Branded<string, 'ExternalAgentJobId'>
 /** Native permission option identifier. */
 export type ExternalAgentOptionId = Branded<string, 'ExternalAgentOptionId'>
 
@@ -33,17 +35,10 @@ export function modelId(value: string): ExternalAgentModelId { return brand<stri
 export function sessionId(value: string): ExternalAgentSessionId { return brand<string, 'ExternalAgentSessionId'>(value, 'session id') }
 /** Brand a turn identifier at a request boundary. */
 export function turnId(value: string): ExternalAgentTurnId { return brand<string, 'ExternalAgentTurnId'>(value, 'turn id') }
+/** Brand a subagent job identifier at a request boundary. */
+export function jobId(value: string): ExternalAgentJobId { return brand<string, 'ExternalAgentJobId'>(value, 'job id') }
 /** Brand a native option identifier at a wire boundary. */
 export function optionId(value: string): ExternalAgentOptionId { return brand<string, 'ExternalAgentOptionId'>(value, 'option id') }
-
-/** Backward-compatible descriptive alias for a provider id. */
-export type ProviderName = ExternalAgentProviderId
-/** Backward-compatible descriptive alias for a native session id. */
-export type NativeSessionId = ExternalAgentSessionId
-/** Alias for providerId used by older provider examples. */
-export const providerName = providerId
-/** Alias for sessionId used by older provider examples. */
-export const nativeSessionId = sessionId
 
 /** Error raised when a provider name is already registered. */
 export class DuplicateProviderError extends Error {
@@ -96,19 +91,12 @@ export interface ExternalAgentRoute {
 }
 /** Explicit model selection understood by the platform. */
 export type SessionModelRoute = LlmRoute | ExternalAgentRoute
-/** Route alias used by earlier provider examples. */
-export type ModelRoute = SessionModelRoute
-/** Route kind alias. */
-export type RouteKind = ExternalAgentRouteKind
-
 /** Build an explicit raw LLM route without a provider. */
 export function createSessionModelRoute(kind: 'llm', model: string): LlmRoute
-/** Compatibility overload accepting an ignored provider slot for older callers. */
-export function createSessionModelRoute(kind: 'llm', _provider: string, model: string): LlmRoute
 /** Build an explicit external-agent route. */
 export function createSessionModelRoute(kind: 'external-agent', provider: string, model: string): ExternalAgentRoute
 export function createSessionModelRoute(kind: ExternalAgentRouteKind, providerOrModel: string, maybeModel?: string): SessionModelRoute {
-  if (kind === 'llm') return { kind, model: modelId(maybeModel ?? providerOrModel) }
+  if (kind === 'llm') return { kind, model: modelId(providerOrModel) }
   if (maybeModel === undefined) throw new RouteResolutionError('external-agent route requires provider and model')
   return { kind, provider: providerId(providerOrModel), model: modelId(maybeModel) }
 }

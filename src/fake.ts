@@ -2,7 +2,7 @@
 import {
   ManagedExternalAgentSession,
   modelId,
-  nativeSessionId,
+  sessionId,
   optionId,
   providerId,
   resumeCursor,
@@ -61,7 +61,7 @@ class FakeSession implements ExternalAgentSession {
   private disposed = false
   private readonly script: () => FakeExternalAgentScript
   constructor(provider: ExternalAgentProviderId, request: ExternalAgentOpenRequest, model: ExternalAgentModel, native: string, script: () => FakeExternalAgentScript) {
-    this.ref = { provider, session: request.session, nativeSession: nativeSessionId(native), resumeCursor: resumeCursor(provider, native) }
+    this.ref = { provider, session: request.session, nativeSession: sessionId(native), resumeCursor: resumeCursor(provider, native) }
     this.supportedModes = model.supportedModes
     this.script = script
   }

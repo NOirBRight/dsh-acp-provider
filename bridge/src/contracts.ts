@@ -11,7 +11,7 @@
  * packages/llm/llm/src/types.ts carries only id plus name, and the
  * configurable-provider directory carries no kind.
  */
-export type BridgeRouteKind = 'model' | 'external-turn'
+export type BridgeRouteKind = 'llm' | 'external-agent'
 
 /** One selectable model inside a route. */
 export interface BridgeModel {
@@ -49,7 +49,7 @@ export interface BridgeTurnResult {
 
 /**
  * Dispatch outcome. Handled false leaves model-kind and unknown routes
- * to the host loop; only external-turn routes are driven here.
+ * to the host loop; only external-agent routes are driven here.
  */
 export type BridgeDriveOutcome =
   | { readonly handled: false }
@@ -106,7 +106,6 @@ export interface BridgeHost {
   }
   readonly sessions: {
     read(sessionId: string): readonly BridgeSessionEvent[]
-    onEvent(listener: (sessionId: string, event: BridgeSessionEvent) => void): () => void
   }
   readonly interaction: {
     requestApproval(request: BridgeApprovalRequest): Promise<BridgeApprovalOutcome>

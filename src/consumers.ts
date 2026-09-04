@@ -5,7 +5,9 @@
 import {
   RouteResolutionError,
   type ExternalAgentEvent,
+  type ExternalAgentJobId,
   type ExternalAgentOpenRequest,
+  type ExternalAgentOptionId,
   type ExternalAgentPermissionDecision,
   type ExternalAgentPermissionRequest,
   type ExternalAgentProviderRegistry,
@@ -13,6 +15,7 @@ import {
   type ExternalAgentSession,
   type ExternalAgentSessionId,
   type ExternalAgentTurnHostCallbacks,
+  type ExternalAgentTurnId,
   type ExternalAgentTurnRequest,
   type ExternalAgentTurnResult,
   type ExternalAgentUserInputAnswers,
@@ -24,14 +27,14 @@ import {
 /** One durable event emitted by a consumer for DSH Session projection. */
 export type ExternalAgentConsumerEvent =
   | { readonly type: 'route-selected'; readonly route: SessionModelRoute }
-  | { readonly type: 'turn-started'; readonly turn: string; readonly route: SessionModelRoute }
+  | { readonly type: 'turn-started'; readonly turn: ExternalAgentTurnId; readonly route: SessionModelRoute }
   | { readonly type: 'activity'; readonly event: ExternalAgentEvent }
   | { readonly type: 'permission-pending'; readonly request: ExternalAgentPermissionRequest }
-  | { readonly type: 'permission-committed'; readonly requestId: string; readonly outcome: ExternalAgentPermissionDecision['kind'] }
+  | { readonly type: 'permission-committed'; readonly requestId: ExternalAgentOptionId; readonly outcome: ExternalAgentPermissionDecision['kind'] }
   | { readonly type: 'question-pending'; readonly request: ExternalAgentUserInputRequest }
-  | { readonly type: 'question-committed'; readonly requestId: string; readonly answers: readonly string[] }
-  | { readonly type: 'turn-finished'; readonly turn: string; readonly result: ExternalAgentTurnResult }
-  | { readonly type: 'subagent-result'; readonly jobId: string; readonly result: ExternalAgentTurnResult }
+  | { readonly type: 'question-committed'; readonly requestId: ExternalAgentOptionId; readonly answers: readonly string[] }
+  | { readonly type: 'turn-finished'; readonly turn: ExternalAgentTurnId; readonly result: ExternalAgentTurnResult }
+  | { readonly type: 'subagent-result'; readonly jobId: ExternalAgentJobId; readonly result: ExternalAgentTurnResult }
 
 /** Callbacks used by both consumer roles. */
 export interface ExternalAgentConsumerCallbacks {
@@ -42,7 +45,7 @@ export interface ExternalAgentConsumerCallbacks {
 export interface ExternalAgentPrimaryTurnRequest extends ExternalAgentConsumerCallbacks {
   readonly session: ExternalAgentSessionId
   readonly route: SessionModelRoute
-  readonly turn?: string
+  readonly turn?: ExternalAgentTurnId
   readonly prompt: string
   readonly attachments?: ExternalAgentTurnRequest['attachments']
   readonly permissionMode: ExternalAgentTurnRequest['permissionMode']
@@ -61,6 +64,14 @@ interface PrimarySlot {
   readonly route: Extract<SessionModelRoute, { kind: 'external-agent' }>
   session?: ExternalAgentSession
   cursor?: ExternalAgentResumeCursor
+}
+
+function openRequestExtras(request: Pick<ExternalAgentOpenRequest, 'clientFilesystem' | 'fullAccessConfirmed' | 'fullAccessAuditId'>): Pick<ExternalAgentOpenRequest, 'clientFilesystem' | 'workspaceRoot' | 'attachmentRoots' | 'fullAccessConfirmed' | 'fullAccessAuditId'> {
+  return {
+    ...(request.clientFilesystem === undefined ? {} : { clientFilesystem: request.clientFilesystem, ...(request.clientFilesystem.workspaceRoots[0] === undefined ? {} : { workspaceRoot: request.clientFilesystem.workspaceRoots[0] }), attachmentRoots: request.clientFilesystem.attachmentRoots }),
+    ...(request.fullAccessConfirmed === undefined ? {} : { fullAccessConfirmed: request.fullAccessConfirmed }),
+    ...(request.fullAccessAuditId === undefined ? {} : { fullAccessAuditId: request.fullAccessAuditId }),
+  }
 }
 
 /**
@@ -125,24 +136,24 @@ export class ExternalAgentPrimaryConsumer {
         await emit({ type: 'permission-pending', request: permission })
         let decision: ExternalAgentPermissionDecision
         try { decision = await request.host.requestPermission(permission) } catch (error) {
-          await emit({ type: 'permission-committed', requestId: String(permission.requestId), outcome: 'unavailable' })
+          await emit({ type: 'permission-committed', requestId: permission.requestId, outcome: 'unavailable' })
           throw error
         }
-        await emit({ type: 'permission-committed', requestId: String(permission.requestId), outcome: decision.kind })
+        await emit({ type: 'permission-committed', requestId: permission.requestId, outcome: decision.kind })
         return decision
       },
       requestUserInput: async question => {
         await emit({ type: 'question-pending', request: question })
         let answer: ExternalAgentUserInputAnswers
         try { answer = await request.host.requestUserInput(question) } catch (error) {
-          await emit({ type: 'question-committed', requestId: String(question.requestId), answers: [] })
+          await emit({ type: 'question-committed', requestId: question.requestId, answers: [] })
           throw error
         }
-        await emit({ type: 'question-committed', requestId: String(question.requestId), answers: answer.answers })
+        await emit({ type: 'question-committed', requestId: question.requestId, answers: answer.answers })
         return answer
       },
     }
-    await emit({ type: 'turn-started', turn: String(effectiveRequest.turn), route: request.route })
+    await emit({ type: 'turn-started', turn: effectiveRequest.turn, route: request.route })
     const session = slot.session
     if (session === undefined) throw new Error('primary external-agent session was disposed before turn start')
     const promise = session.runTurn(effectiveRequest, callbacks)
@@ -150,7 +161,7 @@ export class ExternalAgentPrimaryConsumer {
     try {
       const result = await promise
       if (result.resumeCursor !== undefined) slot.cursor = result.resumeCursor
-      await emit({ type: 'turn-finished', turn: String(effectiveRequest.turn), result })
+      await emit({ type: 'turn-finished', turn: effectiveRequest.turn, result })
       return result
     } finally {
       request.signal.removeEventListener('abort', forwardAbort)
@@ -187,10 +198,8 @@ export class ExternalAgentPrimaryConsumer {
       route,
       session: request.session,
       permissionMode: request.permissionMode,
-      ...(request.clientFilesystem === undefined ? {} : { clientFilesystem: request.clientFilesystem, ...(request.clientFilesystem.workspaceRoots[0] === undefined ? {} : { workspaceRoot: request.clientFilesystem.workspaceRoots[0] }), attachmentRoots: request.clientFilesystem.attachmentRoots }),
+      ...openRequestExtras(request),
       ...(cursor === undefined ? {} : { resumeCursor: cursor }),
-      ...(request.fullAccessConfirmed === undefined ? {} : { fullAccessConfirmed: request.fullAccessConfirmed }),
-      ...(request.fullAccessAuditId === undefined ? {} : { fullAccessAuditId: request.fullAccessAuditId }),
       signal: request.signal,
     }
     const session = this.options.openSession === undefined ? await this.registry.openSession(openRequest) : await this.options.openSession(openRequest)
@@ -210,7 +219,7 @@ export class ExternalAgentPrimaryConsumer {
 
 /** Subagent request with explicit parent authority and foreground/background mode. */
 export interface ExternalAgentSubagentRequest extends ExternalAgentConsumerCallbacks {
-  readonly jobId: string
+  readonly jobId: ExternalAgentJobId
   readonly parentSession: ExternalAgentSessionId
   readonly route: Extract<SessionModelRoute, { kind: 'external-agent' }>
   readonly prompt: string
@@ -234,7 +243,7 @@ export interface ExternalAgentJob {
  */
 export class ExternalAgentSubagentConsumer {
   private disposed = false
-  private readonly active = new Map<string, { readonly controller: AbortController; readonly promise: Promise<ExternalAgentTurnResult> }>()
+  private readonly active = new Map<ExternalAgentJobId, { readonly controller: AbortController; readonly promise: Promise<ExternalAgentTurnResult> }>()
   constructor(private readonly registry: ExternalAgentProviderRegistry) {}
 
   /** Run a foreground child and fold its terminal result through callbacks. */
@@ -275,9 +284,7 @@ export class ExternalAgentSubagentConsumer {
         route: request.route,
         session: request.parentSession,
         permissionMode: request.permissionMode,
-        ...(request.clientFilesystem === undefined ? {} : { clientFilesystem: request.clientFilesystem, ...(request.clientFilesystem.workspaceRoots[0] === undefined ? {} : { workspaceRoot: request.clientFilesystem.workspaceRoots[0] }), attachmentRoots: request.clientFilesystem.attachmentRoots }),
-        ...(request.fullAccessConfirmed === undefined ? {} : { fullAccessConfirmed: request.fullAccessConfirmed }),
-        ...(request.fullAccessAuditId === undefined ? {} : { fullAccessAuditId: request.fullAccessAuditId }),
+        ...openRequestExtras(request),
         signal: controller.signal,
       })
       const result = await session.runTurn({ turn: turnId(request.jobId), prompt: request.prompt, ...(request.attachments === undefined ? {} : { attachments: request.attachments }), permissionMode: request.permissionMode, signal: controller.signal }, request.host)

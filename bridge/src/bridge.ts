@@ -1,8 +1,8 @@
 /**
  * Out-of-tree DSH integration bridge. Mounts external routes against a
  * BridgeHost: explicit-kind directory contribution, primary turn-driver
- * dispatch without a synthetic LlmAdapter or subagent start, session
- * event projection, approval and question delegation, and disposal.
+ * dispatch without a synthetic LlmAdapter or subagent start, stored session
+ * projection, approval and question delegation, and disposal.
  *
  * @module dsh-bridge/bridge
  */
@@ -31,7 +31,6 @@ export interface Bridge {
   readonly routes: readonly BridgeRoute[]
   drive(request: BridgeTurnRequest): Promise<BridgeDriveOutcome>
   project<T>(sessionId: string, init: T, fold: (state: T, event: BridgeSessionEvent) => T): T
-  follow(sessionId: string, listener: (event: BridgeSessionEvent) => void): () => void
   requestApproval(request: BridgeApprovalRequest): Promise<BridgeApprovalOutcome>
   askUser(question: BridgeQuestion, options?: { signal?: AbortSignal }): Promise<string>
   dispose(): void
@@ -43,11 +42,11 @@ function assertRoute(route: BridgeRoute): void {
   if (route.displayName.length === 0) {
     throw new TypeError('dsh-bridge: route "' + route.id + '" displayName must be non-empty');
   }
-  if (route.kind !== 'model' && route.kind !== 'external-turn') {
+  if (route.kind !== 'llm' && route.kind !== 'external-agent') {
     throw new TypeError('dsh-bridge: route "' + route.id + '" has unknown kind ' + JSON.stringify(route.kind));
   }
-  if (route.kind === 'external-turn' && route.models.length === 0) {
-    throw new TypeError('dsh-bridge: external-turn route "' + route.id + '" must advertise at least one model');
+  if (route.kind === 'external-agent' && route.models.length === 0) {
+    throw new TypeError('dsh-bridge: external-agent route "' + route.id + '" must advertise at least one model');
   }
 }
 
@@ -82,7 +81,10 @@ class BridgeImpl implements Bridge {
   async drive(request: BridgeTurnRequest): Promise<BridgeDriveOutcome> {
     this.assertLive();
     const route = this.byId.get(request.routeId);
-    if (route === undefined || route.kind !== 'external-turn') return { handled: false };
+    if (route === undefined || route.kind !== 'external-agent') return { handled: false };
+    if (!route.models.some(model => model.id === request.model)) {
+      return { handled: true, result: { stopReason: 'error', outputText: '', diagnostic: 'dsh-bridge: model "' + request.model + '" is not advertised by route "' + route.id + '"' } };
+    }
     if (request.signal?.aborted === true) {
       return { handled: true, result: { stopReason: 'aborted', outputText: '' } };
     }
@@ -105,13 +107,6 @@ class BridgeImpl implements Bridge {
     let state = init;
     for (const event of this.host.sessions.read(sessionId)) state = fold(state, event);
     return state;
-  }
-
-  follow(sessionId: string, listener: (event: BridgeSessionEvent) => void): () => void {
-    this.assertLive();
-    return this.host.sessions.onEvent((seenId, event) => {
-      if (seenId === sessionId) listener(event);
-    });
   }
 
   requestApproval(request: BridgeApprovalRequest): Promise<BridgeApprovalOutcome> {

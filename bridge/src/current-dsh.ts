@@ -12,7 +12,6 @@ export const REQUIRED_HOST_PATHS: readonly string[] = [
   'directory.list',
   'drivers.setPrimary',
   'sessions.read',
-  'sessions.onEvent',
   'interaction.requestApproval',
   'interaction.askUser',
 ];
