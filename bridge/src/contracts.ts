@@ -95,12 +95,9 @@ export interface BridgeSessionEvent {
 }
 
 /** Native approval option displayed without changing its provider-owned id. */
-export interface BridgeApprovalOption {
-  readonly id: BridgeApprovalOptionId
-  readonly kind: 'allow-once' | 'allow-always' | 'reject' | 'cancel'
-  readonly label: string
-  readonly scope?: 'session' | 'thread'
-}
+export type BridgeApprovalOption =
+  | { readonly id: BridgeApprovalOptionId; readonly kind: 'allow-always'; readonly label: string; readonly scope: 'session' | 'thread' }
+  | { readonly id: BridgeApprovalOptionId; readonly kind: 'allow-once' | 'reject' | 'cancel'; readonly label: string; readonly scope?: never }
 
 /** Security warning attached to one native approval. */
 export interface BridgeApprovalSecurityWarning { readonly message: string; readonly severity: 'warning' | 'danger' }
