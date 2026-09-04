@@ -21,9 +21,9 @@ Given a BridgeHost and a deployment runner, the bridge:
   BridgeRouteKind ('llm' | 'external-agent');
 - dispatches as the primary turn driver for external-agent routes only,
   without a synthetic LlmAdapter and without ctx.subagents.start;
-- projects stored session events with a bounded turn-scoped read/fold;
+- reads and folds stored events from the selected session;
 - delegates approval and user questions agentlessly to the host;
-- unwinds every registration through dispose.
+- unwinds route and primary-driver registrations through dispose.
 
 ## The honest gap
 
@@ -50,7 +50,7 @@ Verified read-only against the DSH source (0.1.1-rc.1):
   construction ('a registration surface for them is deferred until
   such a consumer exists'). The model-visible-means-logged rule then
   forbids new model-visible input without a session event.
-- composition test is blocked too. probeBridgeHost reports all seven
+- composition test is blocked too. probeBridgeHost reports all six
   REQUIRED_HOST_PATHS missing against a DSH-shaped host, and
   createBridge throws 'host is missing ...' instead of mounting.
   There is no passing composition test against current DSH because
@@ -89,8 +89,8 @@ route, duplicate rejection.
 
 - src/contracts.ts: BridgeHost, route/turn/approval vocabulary.
 - src/current-dsh.ts: probeBridgeHost + REQUIRED_HOST_PATHS.
-- src/bridge.ts: createBridge (register, drive, project,
-  delegate, dispose).
+- src/bridge.ts: createBridge (register routes, drive, project,
+  delegate interactions, dispose).
 - tests/bridge.test.js: 10 public-behavior tests against the fake
   host, including the blocked-DSH composition case.
 - cordis.patch.yml: optional single-row mount.
@@ -99,5 +99,5 @@ route, duplicate rejection.
 
 Bridge contract executable against BridgeHost (typecheck + 10 tests
 green). Blocked against current DSH: probeBridgeHost returns all
-seven paths missing on a DSH-shaped host, which is the concrete
+six paths missing on a DSH-shaped host, which is the concrete
 missing upstream extension.

@@ -17,14 +17,7 @@ import { probeBridgeHost } from './current-dsh.ts';
 /** Plugin name: matches the cordis.patch.yml row. */
 export const name = 'dsh-bridge';
 
-/**
- * Host services consulted opportunistically through ctx.get (never hard
- * required): the real mount surface is the BridgeHost directory /
- * drivers / sessions / interaction contract, which current DSH does
- * not provide. Declaring no hard inject keeps this plugin loadable
- * next to any composition; apply() probes and fails loud when the
- * surface is absent.
- */
+/** Current DSH has no injectable BridgeHost service; apply probes the context and fails loud when its methods are absent. */
 export const inject: string[] = [];
 
 /** Untrusted model configuration before ID branding. */
