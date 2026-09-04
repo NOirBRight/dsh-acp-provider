@@ -190,6 +190,24 @@ describe('external-agent platform', () => {
     await consumer.dispose()
   })
 
+  it('waits for in-flight primary preparation during disposal', async () => {
+    const provider = new FakeExternalAgentProvider('disposing', [{ id: 'coder', supportedModes: modes }])
+    const registry = new ExternalAgentProviderRegistry()
+    registry.register(provider)
+    const consumer = new ExternalAgentPrimaryConsumer(registry)
+    let entered!: () => void
+    let release!: () => void
+    const preparing = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const turn = consumer.runTurn({ session: sessionId('disposing'), route: route('disposing'), prompt: 'go', permissionMode: 'approval-required', signal: new AbortController().signal, host: host(), onSessionEvent: async event => { if (event.type === 'route-selected') { entered(); await gate } } })
+    await preparing
+    const disposal = consumer.dispose()
+    release()
+    await expect(disposal).resolves.toBeUndefined()
+    await expect(turn).rejects.toThrow(/disposed/)
+    expect(provider.listModelsCalls).toBe(0)
+  })
+
   it('disposes subagent sessions for foreground and background runs', async () => {
     const provider = new FakeExternalAgentProvider('worker', [{ id: 'coder', supportedModes: modes }], { scripts: [{ events: [{ type: 'assistant-delta', text: 'working' }], result: { text: 'foreground' } }, { result: { text: 'background' } }] })
     const registry = new ExternalAgentProviderRegistry()

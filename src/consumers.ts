@@ -112,7 +112,7 @@ function openRequestExtras(request: Pick<ExternalAgentOpenRequest, 'clientFilesy
 export class ExternalAgentPrimaryConsumer {
   private readonly slots = new Map<string, PrimarySlot>()
   private active: { readonly controller: AbortController; readonly promise: Promise<ExternalAgentTurnResult> } | undefined
-  private preparing = false
+  private preparation: { readonly controller: AbortController; readonly promise: Promise<ExternalAgentTurnResult> } | undefined
   private selected: SessionModelRoute | undefined
   private disposed = false
 
@@ -121,6 +121,11 @@ export class ExternalAgentPrimaryConsumer {
   /** Select a route; switching cancels and settles the active turn first. */
   async selectRoute(route: SessionModelRoute): Promise<void> {
     this.assertLive()
+    if (this.preparation !== undefined) throw new Error('primary external-agent turn is already preparing')
+    await this.switchRoute(route)
+  }
+
+  private async switchRoute(route: SessionModelRoute): Promise<void> {
     if (this.sameRoute(this.selected, route)) return
     const previous = this.selected
     await this.cancelActive()
@@ -136,21 +141,28 @@ export class ExternalAgentPrimaryConsumer {
   }
 
   /** Run one explicit external-agent turn through the selected provider. */
-  async runTurn(request: ExternalAgentPrimaryTurnRequest): Promise<ExternalAgentTurnResult> {
+  runTurn(request: ExternalAgentPrimaryTurnRequest): Promise<ExternalAgentTurnResult> {
     this.assertLive()
-    if (request.route.kind !== 'external-agent') throw new RouteResolutionError('primary consumer requires an external-agent route')
-    if (request.signal.aborted) return { status: 'cancelled', text: '' }
-    if (this.preparing) throw new Error('primary external-agent turn is already preparing')
-    this.preparing = true
-    try {
+    if (request.route.kind !== 'external-agent') return Promise.reject(new RouteResolutionError('primary consumer requires an external-agent route'))
+    if (request.signal.aborted) return Promise.resolve({ status: 'cancelled', text: '' })
+    if (this.preparation !== undefined) return Promise.reject(new Error('primary external-agent turn is already preparing'))
+    const controller = new AbortController()
+    const promise = this.runTurnInternal(request, controller).finally(() => {
+      if (this.preparation?.promise === promise) this.preparation = undefined
+    })
+    this.preparation = { controller, promise }
+    return promise
+  }
+
+  private async runTurnInternal(request: ExternalAgentPrimaryTurnRequest, controller: AbortController): Promise<ExternalAgentTurnResult> {
     if (this.active !== undefined) {
       if (this.sameRoute(this.selected, request.route)) throw new Error('primary external-agent turn is already active')
       await this.cancelActive()
     }
-    await this.selectRoute(request.route)
+    await this.switchRoute(request.route)
     await request.onSessionEvent?.({ type: 'route-selected', route: request.route })
+    this.assertLive()
     const slot = await this.getSlot(request)
-    const controller = new AbortController()
     const forwardAbort = (): void => controller.abort()
     if (request.signal.aborted) controller.abort()
     else request.signal.addEventListener('abort', forwardAbort, { once: true })
@@ -168,7 +180,6 @@ export class ExternalAgentPrimaryConsumer {
     if (session === undefined) throw new Error('primary external-agent session was disposed before turn start')
     const promise = session.runTurn(effectiveRequest, callbacks)
     this.active = { controller, promise }
-    this.preparing = false
     try {
       const result = await promise
       if (result.resumeCursor !== undefined) slot.cursor = result.resumeCursor
@@ -178,7 +189,6 @@ export class ExternalAgentPrimaryConsumer {
       request.signal.removeEventListener('abort', forwardAbort)
       if (this.active?.promise === promise) this.active = undefined
     }
-    } finally { this.preparing = false }
   }
 
   /** Cancel one active turn and wait for provider quiescence. */
@@ -194,6 +204,9 @@ export class ExternalAgentPrimaryConsumer {
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    const preparation = this.preparation
+    preparation?.controller.abort()
+    await preparation?.promise.catch(() => undefined)
     await this.cancelActive()
     await Promise.all([...this.slots.values()].map(slot => slot.session?.dispose().catch(() => undefined)))
     this.slots.clear()
