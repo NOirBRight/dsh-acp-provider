@@ -31,7 +31,7 @@ import {
 import { FakeExternalAgentProvider, fakePermissionRequest } from '../src/fake.js'
 import { ExternalAgentPrimaryConsumer, ExternalAgentSubagentConsumer, type ExternalAgentConsumerEvent } from '../src/consumers.js'
 import { ExternalAgentSettingsEditorRegistry, ExternalAgentSettingsEditorUnavailableError, ExternalAgentSettingsPageModel, MemoryExternalAgentSettingsStore } from '../src/settings.js'
-import { ExternalAgentFilesystemPolicyError, createExternalAgentFilesystemHandler, type ExternalAgentFilesystemResolver } from '../src/filesystem.js'
+import { ExternalAgentFilesystemPolicyError, assertExternalAgentPath, createExternalAgentFilesystemHandler, type ExternalAgentFilesystemResolver } from '../src/filesystem.js'
 
 const modes = ['approval-required', 'auto-accept-edits', 'full-access'] as const
 function route(provider: string, model = 'coder') { return createSessionModelRoute('external-agent', provider, model) }
@@ -292,6 +292,7 @@ describe('external-agent platform', () => {
     await expect(handler('fs/read_text_file', { path: '/workspace/src/a.ts' })).resolves.toBe('/workspace/src/a.ts')
     await expect(handler('fs/read_text_file', { path: '/workspace/link' })).rejects.toThrow(ExternalAgentFilesystemPolicyError)
     await expect(handler('fs/write_text_file', { path: '/attachments/a.txt', content: 'x' })).rejects.toThrow(ExternalAgentFilesystemPolicyError)
+    await expect(assertExternalAgentPath(policy, '/workspace/denied', 'write', { realpath: async path => { if (path.endsWith('/denied')) throw Object.assign(new Error('denied'), { code: 'EACCES' }); return path } })).rejects.toThrow('denied')
     await expect(handler('terminal/create', {})).rejects.toThrow(ExternalAgentFilesystemPolicyError)
   })
 

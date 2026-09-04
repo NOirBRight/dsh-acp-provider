@@ -99,13 +99,13 @@ class BridgeImpl implements Bridge {
     this.active.add(active);
     try {
       return { handled: true, result: await promise };
-    } catch (error: unknown) {
+    } catch {
       return {
         handled: true,
         result: {
           stopReason: controller.signal.aborted ? 'aborted' : 'error',
           outputText: '',
-          ...(controller.signal.aborted ? {} : { diagnostic: error instanceof Error ? error.message : String(error) }),
+          ...(controller.signal.aborted ? {} : { diagnostic: 'dsh-bridge: external-agent runner failed' }),
         },
       };
     } finally {

@@ -143,7 +143,7 @@ describe('primary turn-driver dispatch', () => {
     });
     assert.deepEqual(
       await bridge.drive({ sessionId: 's1', routeId: 'codex', model: 'gpt-5', prompt: 'hi' }),
-      { handled: true, result: { stopReason: 'error', outputText: '', diagnostic: 'boom' } },
+      { handled: true, result: { stopReason: 'error', outputText: '', diagnostic: 'dsh-bridge: external-agent runner failed' } },
     );
     await bridge.dispose();
   });

@@ -163,10 +163,11 @@ export class ExternalAgentProviderRegistry {
     const route = request.route
     if (route.kind !== 'external-agent') throw new RouteResolutionError('route kind is not external-agent: ' + route.kind)
     await authorizeExternalAgentOpen(request, this.options.auditFullAccess)
-    if (request.permissionMode === 'full-access') authorizedFullAccessRequests.add(request)
     const resolved = await resolveExternalAgentRoute(this, route, request.signal)
     if (!resolved.model.supportedModes.includes(request.permissionMode)) throw new UnsupportedModeError('mode ' + request.permissionMode + ' is not supported by ' + route.provider + '/' + route.model)
-    const raw = await resolved.provider.openSession(request)
+    if (request.permissionMode === 'full-access') authorizedFullAccessRequests.add(request)
+    let raw: ExternalAgentSession
+    try { raw = await resolved.provider.openSession(request) } finally { authorizedFullAccessRequests.delete(request) }
     const session = raw instanceof ManagedExternalAgentSession ? raw : new ManagedExternalAgentSession(raw)
     const sessions = this.sessions.get(route.provider)
     if (this.providers.get(route.provider) !== resolved.provider || sessions === undefined) {

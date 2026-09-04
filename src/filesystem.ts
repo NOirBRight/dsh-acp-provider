@@ -32,7 +32,7 @@ export async function assertExternalAgentPath(policy: ExternalAgentFilesystem, p
   const realRoots = await Promise.all(roots.map(root => resolver.realpath(resolve(root), operation)))
   const realAttachmentRoots = operation === 'write' ? await Promise.all(policy.attachmentRoots.map(root => resolver.realpath(resolve(root), operation))) : []
   const target = await resolver.realpath(requested, operation).catch(async error => {
-    if (operation !== 'write') throw error
+    if (operation !== 'write' || !isFileNotFound(error)) throw error
     return resolve(await resolver.realpath(dirname(requested), operation), requested.slice(dirname(requested).length + 1))
   })
   const realRoot = realRoots.find(root => isWithin(root, target))
@@ -49,14 +49,17 @@ export function createExternalAgentFilesystemHandler(policy: ExternalAgentFilesy
     if (!isRequest(params)) throw new ExternalAgentFilesystemPolicyError('filesystem request is malformed')
     if (method === 'fs/read_text_file') {
       const target = await assertExternalAgentPath(policy, params.path, 'read', resolver)
+      signal?.throwIfAborted()
       return policy.readTextFile(target, signal)
     }
     if (typeof params.content !== 'string') throw new ExternalAgentFilesystemPolicyError('filesystem write has no text content')
     const target = await assertExternalAgentPath(policy, params.path, 'write', resolver)
+    signal?.throwIfAborted()
     await policy.writeTextFile(target, params.content, signal)
     return {}
   }
 }
+function isFileNotFound(error: unknown): error is NodeJS.ErrnoException { return error instanceof Error && 'code' in error && error.code === 'ENOENT' }
 function isRequest(value: unknown): value is ExternalAgentFilesystemRequest { return typeof value === 'object' && value !== null && typeof (value as { path?: unknown }).path === 'string' }
 function isWithin(root: string, target: string): boolean {
   const rel = relative(resolve(root), resolve(target))

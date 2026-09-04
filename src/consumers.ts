@@ -72,8 +72,8 @@ interface PrimarySlot {
 function createConsumerTurnHost(host: ExternalAgentTurnHostCallbacks, emit: (event: ExternalAgentConsumerEvent) => void | Promise<void>): ExternalAgentTurnHostCallbacks {
   return {
     publish: async event => {
-      await host.publish(event)
       await emit({ type: 'activity', event })
+      await host.publish(event)
     },
     requestPermission: async request => {
       await emit({ type: 'permission-pending', request })
@@ -150,7 +150,10 @@ export class ExternalAgentPrimaryConsumer {
     if (request.signal.aborted) return Promise.resolve({ status: 'cancelled', text: '' })
     if (this.preparation !== undefined) return Promise.reject(new Error('primary external-agent turn is already preparing'))
     const controller = new AbortController()
+    const forwardAbort = (): void => controller.abort()
+    request.signal.addEventListener('abort', forwardAbort, { once: true })
     const promise = this.runTurnInternal(request, controller).finally(() => {
+      request.signal.removeEventListener('abort', forwardAbort)
       if (this.preparation?.promise === promise) this.preparation = undefined
     })
     this.preparation = { controller, promise }
@@ -165,23 +168,28 @@ export class ExternalAgentPrimaryConsumer {
     await this.switchRoute(request.route)
     await request.onSessionEvent?.({ type: 'route-selected', route: request.route })
     this.assertLive()
-    const slot = await this.getSlot(request)
-    const forwardAbort = (): void => controller.abort()
-    if (request.signal.aborted) controller.abort()
-    else request.signal.addEventListener('abort', forwardAbort, { once: true })
+    const effectiveTurn = turnId(request.turn ?? crypto.randomUUID())
+    const emit = (event: ExternalAgentConsumerEvent): void | Promise<void> => request.onSessionEvent?.(event)
+    await emit({ type: 'turn-started', turn: effectiveTurn, route: request.route })
+    let slot: PrimarySlot
+    try { slot = await this.getSlot(request, controller.signal) } catch (error) {
+      const result: ExternalAgentTurnResult = controller.signal.aborted ? { status: 'cancelled', text: '' } : { status: 'failed', text: '', error: 'external-agent turn failed' }
+      await emit({ type: 'turn-finished', turn: effectiveTurn, result })
+      if (controller.signal.aborted) return result
+      throw error
+    }
     const effectiveRequest: ExternalAgentTurnRequest = {
-      turn: turnId(request.turn ?? crypto.randomUUID()),
+      turn: effectiveTurn,
       prompt: request.prompt,
       ...(request.attachments === undefined ? {} : { attachments: request.attachments }),
       permissionMode: request.permissionMode,
       signal: controller.signal,
     }
-    const emit = (event: ExternalAgentConsumerEvent): void | Promise<void> => request.onSessionEvent?.(event)
     const callbacks = createConsumerTurnHost(request.host, emit)
-    await emit({ type: 'turn-started', turn: effectiveRequest.turn, route: request.route })
     const session = slot.session
-    if (session === undefined) throw new Error('primary external-agent session was disposed before turn start')
-    const promise = session.runTurn(effectiveRequest, callbacks)
+    const promise = session === undefined
+      ? Promise.reject(new Error('primary external-agent session was disposed before turn start'))
+      : Promise.resolve().then(() => session.runTurn(effectiveRequest, callbacks))
     this.active = { controller, promise }
     try {
       const result = await promise
@@ -192,7 +200,6 @@ export class ExternalAgentPrimaryConsumer {
       await emit({ type: 'turn-finished', turn: effectiveRequest.turn, result: { status: 'failed', text: '', error: 'external-agent turn failed' } })
       throw error
     } finally {
-      request.signal.removeEventListener('abort', forwardAbort)
       if (this.active?.promise === promise) this.active = undefined
     }
   }
@@ -218,7 +225,7 @@ export class ExternalAgentPrimaryConsumer {
     this.slots.clear()
   }
 
-  private async getSlot(request: ExternalAgentPrimaryTurnRequest): Promise<PrimarySlot> {
+  private async getSlot(request: ExternalAgentPrimaryTurnRequest, signal: AbortSignal): Promise<PrimarySlot> {
     const route = request.route
     if (route.kind !== 'external-agent') throw new RouteResolutionError('primary consumer requires an external-agent route')
     const key = this.routeKey(route)
@@ -231,7 +238,7 @@ export class ExternalAgentPrimaryConsumer {
       permissionMode: request.permissionMode,
       ...openRequestExtras(request),
       ...(cursor === undefined ? {} : { resumeCursor: cursor }),
-      signal: request.signal,
+      signal,
     }
     const session = this.options.openSession === undefined ? await this.registry.openSession(openRequest) : await this.options.openSession(openRequest)
     const slot = existing ?? { key, route }

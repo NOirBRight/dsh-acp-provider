@@ -77,7 +77,7 @@ const probe = probeBridgeHost(host);
 if (!probe.ok) throw new Error('blocked: missing ' + probe.missing.join(', '));
 const bridge = createBridge(host, { routes, runner });
 // ... bridge.drive / project / requestApproval / askUser ...
-bridge.dispose();
+await bridge.dispose();
 ```
 
 cordis.patch.yml mounts the bridge as one optional row (routes: [] by
@@ -91,13 +91,13 @@ route, duplicate rejection.
 - src/current-dsh.ts: probeBridgeHost + REQUIRED_HOST_PATHS.
 - src/bridge.ts: createBridge (register routes, drive, project,
   delegate interactions, dispose).
-- tests/bridge.test.js: 10 public-behavior tests against the fake
+- tests/bridge.test.js: 12 public-behavior tests against the fake
   host, including the blocked-DSH composition case.
 - cordis.patch.yml: optional single-row mount.
 
 ## Status
 
-Bridge contract executable against BridgeHost (typecheck + 10 tests
+Bridge contract executable against BridgeHost (typecheck + 12 tests
 green). Blocked against current DSH: probeBridgeHost returns all
 six paths missing on a DSH-shaped host, which is the concrete
 missing upstream extension.

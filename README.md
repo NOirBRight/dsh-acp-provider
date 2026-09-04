@@ -42,9 +42,9 @@ await unregister()
 - Provider and model resolution is exact; unknown routes and unsupported permission modes fail explicitly.
 - Every turn receives an expiring host. Aborts and settlement reject later provider permission or question requests.
 - Native allow_always options retain their exact id and carry only a native session or thread scope. DSH never replays them from old logs.
-- Full access requires explicit confirmation and a value-free audit record before the provider starts.
+- Full access requires explicit confirmation and a value-free audit record before the provider starts; its handoff proof is valid for one provider open only.
 - Native tool activity is already-executed work; consumers publish it and never execute it again as a DSH tool call.
-- Host filesystem callbacks remain DSH-owned; providers that expose ACP file methods must supply an operation-aware canonical-path resolver.
+- Host filesystem callbacks remain DSH-owned; providers that expose ACP file methods must supply an operation-aware canonical-path resolver. Write resolution falls back to the canonical parent only when the target is absent.
 - Effectful turns have no automatic retry. Primary turn setup is serialized, and both consumer roles log route selection, turn lifecycle, activity, and interaction state. Event and interaction payloads have configurable byte and count bounds.
 
 ## DSH integration
