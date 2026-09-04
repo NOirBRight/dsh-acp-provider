@@ -1,0 +1,9 @@
+# Optional out-of-tree mount for the DSH bridge. Applied only when the
+# dsh-bridge package is installed into the profile. Loads no providers
+# and starts no processes by itself; routes are contributed only where the
+# host offers the explicit route-kind directory (see README.md).
+- insert:
+    - id: dsh-bridge
+      name: dsh-bridge
+      config:
+        routes: []

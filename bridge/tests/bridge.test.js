@@ -1,0 +1,248 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { apply, createBridge, probeBridgeHost, REQUIRED_HOST_PATHS } from '../lib/index.js';
+
+/** Minimal in-memory BridgeHost: the fake the bridge mounts against. */
+function fakeHost(overrides = {}) {
+  const routes = new Map();
+  const events = new Map();
+  let primary = undefined;
+  const host = {
+    directory: {
+      register(route) {
+        if (routes.has(route.id)) throw new Error('duplicate ' + route.id);
+        routes.set(route.id, route);
+        return () => { routes.delete(route.id); };
+      },
+      list() { return [...routes.values()]; },
+    },
+    drivers: {
+      setPrimary(driver) {
+        if (primary !== undefined) throw new Error('primary already set');
+        primary = driver;
+        return () => { primary = undefined; };
+      },
+    },
+    sessions: {
+      read(sessionId) { return events.get(sessionId) ?? []; },
+    },
+    interaction: {
+      async requestApproval(request) {
+        host.lastApproval = request;
+        return { kind: 'allowed-for-session', optionId: 'always', scope: 'session' };
+      },
+      async askUser(question, options) {
+        host.lastQuestion = { question, signal: options?.signal };
+        return 'answer';
+      },
+    },
+    emit(sessionId, event) {
+      const list = events.get(sessionId) ?? [];
+      list.push(event);
+      events.set(sessionId, list);
+    },
+    get primary() { return primary; },
+    lastApproval: undefined,
+    lastQuestion: undefined,
+    ...overrides,
+  };
+  return host;
+}
+
+const ROUTES = [
+  { id: 'codex', displayName: 'Codex', kind: 'external-agent', models: [{ id: 'gpt-5', name: 'GPT-5' }] },
+  { id: 'deepseek', displayName: 'DeepSeek', kind: 'llm', models: [{ id: 'deepseek-chat', name: 'Chat' }] },
+];
+
+const runner = {
+  async run(request) {
+    return { stopReason: 'completed', outputText: 'did:' + request.prompt };
+  },
+};
+
+describe('directory contribution with explicit route kind', () => {
+  it('registers every route and lists them back with kind intact', async () => {
+    const host = fakeHost();
+    const bridge = createBridge(host, { routes: ROUTES, runner });
+    assert.deepEqual(host.directory.list(), ROUTES);
+    assert.equal(host.directory.list()[0].kind, 'external-agent');
+    assert.equal(host.directory.list()[1].kind, 'llm');
+    await bridge.dispose();
+    assert.deepEqual(host.directory.list(), []);
+  });
+
+  it('rejects invalid configured model identifiers before probing the host', () => {
+    assert.throws(() => apply({}, { routes: [{ id: 'agy', displayName: 'Agy', kind: 'external-agent', models: [{ id: '', name: 'Agy' }] }] }), /model id/);
+    assert.throws(() => apply({}, { routes: [{ id: 'agy', displayName: 'Agy', kind: 'external-agent', models: [{ id: 'default', name: '' }] }] }), /model name/);
+  });
+
+  it('rejects an external-agent route with no models', () => {
+    const host = fakeHost();
+    assert.throws(
+      () => createBridge(host, { routes: [{ id: 'x', displayName: 'X', kind: 'external-agent', models: [] }], runner }),
+      /at least one model/,
+    );
+    assert.throws(() => createBridge(host, { routes: [{ id: 'x', displayName: 'X', kind: 'external-agent', models: [{ id: '', name: 'X' }] }], runner }), /empty model/);
+    assert.throws(() => createBridge(host, { routes: [{ id: 'x', displayName: 'X', kind: 'external-agent', models: [{ id: 'same', name: 'A' }, { id: 'same', name: 'B' }] }], runner }), /duplicate model/);
+  });
+
+  it('rejects duplicate route ids', () => {
+    const host = fakeHost();
+    assert.throws(
+      () => createBridge(host, { routes: [ROUTES[0], ROUTES[0]], runner }),
+      /duplicate route/,
+    );
+  });
+});
+
+describe('primary turn-driver dispatch', () => {
+  it('drives external-agent routes through the runner, leaves LLM routes alone', async () => {
+    const host = fakeHost();
+    const bridge = createBridge(host, { routes: ROUTES, runner });
+    const external = await host.primary.drive({ sessionId: 's1', routeId: 'codex', model: 'gpt-5', prompt: 'hi' });
+    assert.deepEqual(external, { handled: true, result: { stopReason: 'completed', outputText: 'did:hi' } });
+    // Same drive path via the bridge handle.
+    const viaBridge = await bridge.drive({ sessionId: 's1', routeId: 'codex', model: 'gpt-5', prompt: 'hi' });
+    assert.deepEqual(viaBridge, external);
+    assert.deepEqual(
+      await bridge.drive({ sessionId: 's1', routeId: 'codex', model: 'unknown', prompt: 'hi' }),
+      { handled: true, result: { stopReason: 'error', outputText: '', diagnostic: 'dsh-bridge: model \"unknown\" is not advertised by route \"codex\"' } },
+    );
+    // LLM-kind and unknown routes are not driven: no LlmAdapter, no subagent start.
+    assert.deepEqual(
+      await bridge.drive({ sessionId: 's1', routeId: 'deepseek', model: 'deepseek-chat', prompt: 'hi' }),
+      { handled: false },
+    );
+    assert.deepEqual(
+      await bridge.drive({ sessionId: 's1', routeId: 'nope', model: 'm', prompt: 'hi' }),
+      { handled: false },
+    );
+    await bridge.dispose();
+  });
+
+  it('maps an aborted signal to an aborted turn without calling the runner', async () => {
+    let called = 0;
+    const host = fakeHost();
+    const bridge = createBridge(host, {
+      routes: ROUTES,
+      runner: { async run() { called += 1; return { stopReason: 'completed', outputText: '' }; } },
+    });
+    const controller = new AbortController();
+    controller.abort();
+    assert.deepEqual(
+      await bridge.drive({ sessionId: 's1', routeId: 'codex', model: 'gpt-5', prompt: 'hi', signal: controller.signal }),
+      { handled: true, result: { stopReason: 'aborted', outputText: '' } },
+    );
+    assert.equal(called, 0);
+    await bridge.dispose();
+  });
+
+  it('maps a runner throw to an error turn', async () => {
+    const host = fakeHost();
+    const bridge = createBridge(host, {
+      routes: ROUTES,
+      runner: { async run() { throw new Error('boom'); } },
+    });
+    assert.deepEqual(
+      await bridge.drive({ sessionId: 's1', routeId: 'codex', model: 'gpt-5', prompt: 'hi' }),
+      { handled: true, result: { stopReason: 'error', outputText: '', diagnostic: 'dsh-bridge: external-agent runner failed' } },
+    );
+    await bridge.dispose();
+  });
+});
+
+describe('session event projection', () => {
+  it('folds only stored events from the requested session', async () => {
+    const host = fakeHost();
+    const bridge = createBridge(host, { routes: ROUTES, runner });
+    host.emit('s1', { type: 'user/message', seq: 0, data: {} });
+    host.emit('s1', { type: 'assistant/message', seq: 1, data: {} });
+    host.emit('s2', { type: 'user/message', seq: 0, data: {} });
+    assert.equal(bridge.project('s1', 0, (n) => n + 1), 2);
+    await bridge.dispose();
+  });
+});
+
+describe('approval and question delegation', () => {
+  it('forwards agentless approval and questions to the host', async () => {
+    const host = fakeHost();
+    const bridge = createBridge(host, { routes: ROUTES, runner });
+    const approval = await bridge.requestApproval({ sessionId: 's1', toolName: 'run', reason: 'why', options: [{ id: 'once', kind: 'allow-once', label: 'Allow once' }, { id: 'always', kind: 'allow-always', label: 'Allow for session', scope: 'session' }], securityWarning: { message: 'Native terminal has broader access.', severity: 'danger' } });
+    assert.deepEqual(approval, { kind: 'allowed-for-session', optionId: 'always', scope: 'session' });
+    assert.equal(host.lastApproval.sessionId, 's1');
+    assert.equal(host.lastApproval.toolName, 'run');
+    assert.equal(host.lastApproval.reason, 'why');
+    assert.equal(host.lastApproval.options[1].scope, 'session');
+    assert.equal(host.lastApproval.securityWarning.severity, 'danger');
+    assert.equal(await bridge.askUser({ id: 'q1', question: 'proceed?' }), 'answer');
+    assert.equal(host.lastQuestion.question.id, 'q1');
+    await bridge.dispose();
+  });
+});
+
+describe('disposal', () => {
+  it('aborts and awaits an in-flight runner', async () => {
+    const host = fakeHost();
+    let release;
+    let aborted = false;
+    const runner = { run: request => new Promise(resolve => { request.signal.addEventListener('abort', () => { aborted = true; }); release = resolve; }) };
+    const bridge = createBridge(host, { routes: ROUTES, runner });
+    const turn = bridge.drive({ sessionId: 's', routeId: 'codex', model: 'gpt-5', prompt: 'wait' });
+    await Promise.resolve();
+    let disposed = false;
+    const disposal = bridge.dispose().then(() => { disposed = true; });
+    await Promise.resolve();
+    assert.equal(aborted, true);
+    assert.equal(disposed, false);
+    release({ stopReason: 'aborted', outputText: '' });
+    await disposal;
+    assert.deepEqual(await turn, { handled: true, result: { stopReason: 'aborted', outputText: '' } });
+  });
+
+  it('aborts and awaits an in-flight interaction', async () => {
+    const host = fakeHost();
+    let release;
+    let aborted = false;
+    host.interaction.askUser = (_question, options) => new Promise(resolve => { options.signal.addEventListener('abort', () => { aborted = true; }); release = resolve; });
+    const bridge = createBridge(host, { routes: ROUTES, runner });
+    const interaction = bridge.askUser({ id: 'q1', question: 'wait?' });
+    await Promise.resolve();
+    let disposed = false;
+    const disposal = bridge.dispose().then(() => { disposed = true; });
+    await Promise.resolve();
+    assert.equal(aborted, true);
+    assert.equal(disposed, false);
+    release('cancelled');
+    assert.equal(await interaction, 'cancelled');
+    await disposal;
+  });
+
+  it('unregisters routes and the driver; use after dispose throws', async () => {
+    const host = fakeHost();
+    const bridge = createBridge(host, { routes: ROUTES, runner });
+    await bridge.dispose();
+    await bridge.dispose();
+    assert.deepEqual(host.directory.list(), []);
+    assert.equal(host.primary, undefined);
+    await assert.rejects(bridge.drive({ sessionId: 's', routeId: 'codex', model: 'm', prompt: 'p' }), /disposed/);
+    assert.throws(() => bridge.project('s', 0, (n) => n), /disposed/);
+  });
+});
+
+describe('current-DSH composition gap', () => {
+  it('a DSH-shaped host exposes none of the bridge surface', () => {
+    // Shaped after the real seams: adapter registry, agent factory,
+    // session store, approval waterfall. None of them is the bridge
+    // directory / primary-driver / agentless-interaction surface.
+    const dshShaped = {
+      llm: { registerAdapter() {}, listProviders() { return []; } },
+      agents: { create() {}, get() {} },
+      sessions: { get() {} },
+      approval: {},
+    };
+    const probe = probeBridgeHost(dshShaped);
+    assert.equal(probe.ok, false);
+    assert.deepEqual([...probe.missing], [...REQUIRED_HOST_PATHS]);
+    assert.throws(() => createBridge(dshShaped, { routes: ROUTES, runner }), /host is missing/);
+  });
+});

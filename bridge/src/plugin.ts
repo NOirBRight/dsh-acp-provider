@@ -1,0 +1,104 @@
+/**
+ * Cordis function-plugin entry for dsh-bridge. Optional mount only:
+ * validates config, probes the host for the bridge surface, and mounts
+ * the bridge when the host provides it. Against current DSH the probe
+ * reports the missing surface and apply throws a blocked error naming
+ * the exact upstream hook, instead of faking a seam.
+ *
+ * @module dsh-bridge/plugin
+ */
+
+import { createBridge } from './bridge.ts';
+import type { BridgeConfig } from './bridge.ts';
+import { bridgeModelId, bridgeRouteId } from './contracts.ts';
+import type { BridgeDriveOutcome, BridgeModel, BridgeRoute, BridgeTurnRequest } from './contracts.ts';
+import { probeBridgeHost } from './current-dsh.ts';
+
+/** Plugin name: matches the cordis.patch.yml row. */
+export const name = 'dsh-bridge';
+
+/** Current DSH has no injectable BridgeHost service; apply probes the context and fails loud when its methods are absent. */
+export const inject: string[] = [];
+
+/** Untrusted model configuration before ID branding. */
+export type BridgeModelConfig = Omit<BridgeModel, 'id'> & { readonly id: string }
+/** Untrusted route configuration before ID branding. */
+export type BridgeRouteConfig = Omit<BridgeRoute, 'id' | 'models'> & { readonly id: string; readonly models: readonly BridgeModelConfig[] }
+/** Deployment config: routes only. The runner is host-provided. */
+export interface Config {
+  readonly routes?: readonly BridgeRouteConfig[]
+}
+
+/** Host-supplied product runner slot the bridge drives through. */
+export interface BridgeRunnerSlot {
+  (request: BridgeTurnRequest): Promise<BridgeDriveOutcome>;
+}
+
+/**
+ * Validate one configured route at the earliest resolvable point.
+ * @param route - candidate route from plugin config.
+ */
+function assertConfigRoute(route: BridgeRouteConfig): void {
+  if (typeof route.id !== 'string' || route.id.length === 0) {
+    throw new TypeError('dsh-bridge: config route id must be a non-empty string');
+  }
+  if (typeof route.displayName !== 'string' || route.displayName.length === 0) throw new TypeError('dsh-bridge: route displayName must be a non-empty string');
+  if (route.kind !== 'llm' && route.kind !== 'external-agent') {
+    throw new TypeError('dsh-bridge: config route "' + route.id + '" needs kind "llm" or "external-agent"');
+  }
+  if (!Array.isArray(route.models) || route.kind === 'external-agent' && route.models.length === 0) throw new TypeError('dsh-bridge: external-agent route must advertise at least one model');
+  const models = new Set<string>();
+  for (const model of route.models) {
+    if (typeof model.id !== 'string' || model.id.length === 0) throw new TypeError('dsh-bridge: model id must be a non-empty string');
+    if (typeof model.name !== 'string' || model.name.length === 0) throw new TypeError('dsh-bridge: model name must be a non-empty string');
+    if (models.has(model.id)) throw new TypeError('dsh-bridge: duplicate model id "' + model.id + '"');
+    models.add(model.id);
+  }
+}
+
+/**
+ * Mount the bridge when the host offers the surface; fail loud otherwise.
+ * @param ctx - plugin context (probed structurally for the host surface).
+ * @param config - deployment routes.
+ */
+export function apply(ctx: unknown, config: Config): void {
+  const configuredRoutes = [...(config.routes ?? [])];
+  const routeIds = new Set<string>();
+  for (const route of configuredRoutes) {
+    assertConfigRoute(route);
+    if (routeIds.has(route.id)) throw new TypeError('dsh-bridge: duplicate route id "' + route.id + '"');
+    routeIds.add(route.id);
+  }
+  const routes: BridgeRoute[] = configuredRoutes.map(route => ({ ...route, id: bridgeRouteId(route.id), models: route.models.map(model => ({ ...model, id: bridgeModelId(model.id) })) }));
+  const host = ctx as Record<string, unknown>;
+  const probe = probeBridgeHost(host);
+  if (!probe.ok) {
+    throw new Error(
+      'dsh-bridge: blocked against this host: missing ' + probe.missing.join(', ') + '. ' +
+      'Upstream hook required: explicit route-kind directory plus primary turn-driver dispatch ' +
+      '(see README.md). No providers were mounted and no process was started.',
+    );
+  }
+  const slot = (host as { bridgeRunner?: unknown }).bridgeRunner;
+  if (typeof slot !== 'function') {
+    throw new Error('dsh-bridge: host provides the surface but no bridgeRunner; refusing to mount without a runner.');
+  }
+  const runner = slot as BridgeRunnerSlot;
+  const context = ctx as { effect(cb: () => () => void, label: string): unknown };
+  const bridgeConfig: BridgeConfig = {
+    routes,
+    runner: {
+      run: (request) => runner(request).then((o) => {
+        if (o.handled) return o.result;
+        throw new Error(`dsh-bridge: runner declined route "${request.routeId}"`);
+      }),
+    },
+  };
+  const mounted = createBridge(host as never, bridgeConfig);
+  try {
+    context.effect(() => () => mounted.dispose(), 'dsh-bridge.dispose()');
+  } catch (error) {
+    void mounted.dispose();
+    throw error;
+  }
+}
