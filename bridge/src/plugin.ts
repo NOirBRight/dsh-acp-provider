@@ -10,7 +10,8 @@
 
 import { createBridge } from './bridge.ts';
 import type { Bridge, BridgeConfig } from './bridge.ts';
-import type { BridgeDriveOutcome, BridgeRoute, BridgeTurnRequest } from './contracts.ts';
+import { bridgeModelId, bridgeRouteId } from './contracts.ts';
+import type { BridgeDriveOutcome, BridgeModel, BridgeRoute, BridgeTurnRequest } from './contracts.ts';
 import { probeBridgeHost } from './current-dsh.ts';
 
 /** Plugin name: matches the cordis.patch.yml row. */
@@ -26,9 +27,13 @@ export const name = 'dsh-bridge';
  */
 export const inject: string[] = [];
 
+/** Untrusted model configuration before ID branding. */
+export type BridgeModelConfig = Omit<BridgeModel, 'id'> & { readonly id: string }
+/** Untrusted route configuration before ID branding. */
+export type BridgeRouteConfig = Omit<BridgeRoute, 'id' | 'models'> & { readonly id: string; readonly models: readonly BridgeModelConfig[] }
 /** Deployment config: routes only. The runner is host-provided. */
 export interface Config {
-  readonly routes?: readonly BridgeRoute[]
+  readonly routes?: readonly BridgeRouteConfig[]
 }
 
 /** Host-supplied product runner slot the bridge drives through. */
@@ -43,7 +48,7 @@ let live: Bridge | undefined;
  * Validate one configured route at the earliest resolvable point.
  * @param route - candidate route from plugin config.
  */
-function assertConfigRoute(route: BridgeRoute): void {
+function assertConfigRoute(route: BridgeRouteConfig): void {
   if (typeof route.id !== 'string' || route.id.length === 0) {
     throw new TypeError('dsh-bridge: config route id must be a non-empty string');
   }
@@ -58,8 +63,9 @@ function assertConfigRoute(route: BridgeRoute): void {
  * @param config - deployment routes.
  */
 export function apply(ctx: unknown, config: Config): void {
-  const routes = [...(config.routes ?? [])];
-  for (const route of routes) assertConfigRoute(route);
+  const configuredRoutes = [...(config.routes ?? [])];
+  for (const route of configuredRoutes) assertConfigRoute(route);
+  const routes: BridgeRoute[] = configuredRoutes.map(route => ({ ...route, id: bridgeRouteId(route.id), models: route.models.map(model => ({ ...model, id: bridgeModelId(model.id) })) }));
   const host = ctx as Record<string, unknown>;
   const probe = probeBridgeHost(host);
   if (!probe.ok) {

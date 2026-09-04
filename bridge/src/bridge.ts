@@ -16,6 +16,7 @@ import type {
   BridgeRoute,
   BridgeRunner,
   BridgeSessionEvent,
+  BridgeSessionId,
   BridgeTurnRequest,
 } from './contracts.ts';
 import { missingPaths } from './current-dsh.ts';
@@ -30,7 +31,7 @@ export interface BridgeConfig {
 export interface Bridge {
   readonly routes: readonly BridgeRoute[]
   drive(request: BridgeTurnRequest): Promise<BridgeDriveOutcome>
-  project<T>(sessionId: string, init: T, fold: (state: T, event: BridgeSessionEvent) => T): T
+  project<T>(sessionId: BridgeSessionId, init: T, fold: (state: T, event: BridgeSessionEvent) => T): T
   requestApproval(request: BridgeApprovalRequest): Promise<BridgeApprovalOutcome>
   askUser(question: BridgeQuestion, options?: { signal?: AbortSignal }): Promise<string>
   dispose(): void
@@ -102,7 +103,7 @@ class BridgeImpl implements Bridge {
     }
   }
 
-  project<T>(sessionId: string, init: T, fold: (state: T, event: BridgeSessionEvent) => T): T {
+  project<T>(sessionId: BridgeSessionId, init: T, fold: (state: T, event: BridgeSessionEvent) => T): T {
     this.assertLive();
     let state = init;
     for (const event of this.host.sessions.read(sessionId)) state = fold(state, event);
