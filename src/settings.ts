@@ -1,5 +1,5 @@
 /** Provider-owned Settings models and the generic External Agents page join. */
-import type { ExternalAgentProviderId } from './index.js'
+import type { ExternalAgentProviderId, ExternalAgentProviderInstanceId } from './contracts.js'
 
 /** Common runtime health shown without equating plugin liveness to readiness. */
 export interface ExternalAgentSettingsStatus {
@@ -12,26 +12,26 @@ export interface ExternalAgentSettingsStatus {
 /** Directory row for one independently configured provider instance. */
 export interface ExternalAgentSettingsDirectoryEntry {
   readonly provider: ExternalAgentProviderId
-  readonly instanceId: string
+  readonly instanceId: ExternalAgentProviderInstanceId
   readonly displayName: string
 }
 /** Serialized provider-specific settings. */
 export interface ExternalAgentSerializedSettings {
   readonly provider: ExternalAgentProviderId
-  readonly instanceId: string
+  readonly instanceId: ExternalAgentProviderInstanceId
   readonly values: Readonly<Record<string, string | boolean | number | null>>
 }
 /** Value-free credential metadata. */
 export interface ExternalAgentCredentialMetadata {
   readonly provider: ExternalAgentProviderId
-  readonly instanceId: string
+  readonly instanceId: ExternalAgentProviderInstanceId
   readonly authenticated: boolean
   readonly accountLabel?: string
 }
 /** Provider editor snapshot contributed by a provider plugin. */
 export interface ExternalAgentSettingsEditorSnapshot {
   readonly provider: ExternalAgentProviderId
-  readonly instanceId: string
+  readonly instanceId: ExternalAgentProviderInstanceId
   readonly title: string
   readonly status: ExternalAgentSettingsStatus
   readonly fields: readonly ExternalAgentSettingsField[]
@@ -53,7 +53,7 @@ export interface ExternalAgentSettingsAction {
 /** Editor contribution registered by one provider instance. */
 export interface ExternalAgentSettingsEditor {
   readonly provider: ExternalAgentProviderId
-  readonly instanceId: string
+  readonly instanceId: ExternalAgentProviderInstanceId
   snapshot(): ExternalAgentSettingsEditorSnapshot
   run(action: string, value?: unknown): Promise<unknown>
 }
@@ -71,7 +71,7 @@ export interface ExternalAgentSettingsPage {
 }
 /** Explicit missing-editor failure. */
 export class ExternalAgentSettingsEditorUnavailableError extends Error {
-  constructor(readonly provider: ExternalAgentProviderId, readonly instanceId: string) {
+  constructor(readonly provider: ExternalAgentProviderId, readonly instanceId: ExternalAgentProviderInstanceId) {
     super('External Agent Settings editor is unavailable for ' + provider + '/' + instanceId)
     this.name = 'ExternalAgentSettingsEditorUnavailableError'
   }
@@ -82,7 +82,7 @@ export interface ExternalAgentSettingsStore {
   listSettings(): readonly ExternalAgentSerializedSettings[]
   listCredentials(): readonly ExternalAgentCredentialMetadata[]
   saveDirectory(entry: ExternalAgentSettingsDirectoryEntry): Promise<void> | void
-  removeDirectory(provider: ExternalAgentProviderId, instanceId: string): Promise<void> | void
+  removeDirectory(provider: ExternalAgentProviderId, instanceId: ExternalAgentProviderInstanceId): Promise<void> | void
 }
 /** In-memory store for Loader and Settings tests. */
 export class MemoryExternalAgentSettingsStore implements ExternalAgentSettingsStore {
@@ -103,7 +103,7 @@ export class MemoryExternalAgentSettingsStore implements ExternalAgentSettingsSt
   /** Add or replace one directory row. */
   saveDirectory(entry: ExternalAgentSettingsDirectoryEntry): void { this.directory.set(key(entry.provider, entry.instanceId), entry) }
   /** Remove a row and its provider-owned metadata. */
-  removeDirectory(provider: ExternalAgentProviderId, instanceId: string): void {
+  removeDirectory(provider: ExternalAgentProviderId, instanceId: ExternalAgentProviderInstanceId): void {
     const id = key(provider, instanceId)
     this.directory.delete(id)
     this.settings.delete(id)
@@ -122,7 +122,7 @@ export class ExternalAgentSettingsEditorRegistry {
     return () => { if (active) { active = false; if (this.editors.get(id) === editor) this.editors.delete(id) } }
   }
   /** Find an editor or fail explicitly. */
-  require(provider: ExternalAgentProviderId, instanceId: string): ExternalAgentSettingsEditor {
+  require(provider: ExternalAgentProviderId, instanceId: ExternalAgentProviderInstanceId): ExternalAgentSettingsEditor {
     const editor = this.editors.get(key(provider, instanceId))
     if (editor === undefined) throw new ExternalAgentSettingsEditorUnavailableError(provider, instanceId)
     return editor
@@ -155,8 +155,8 @@ export class ExternalAgentSettingsPageModel {
   /** Add or replace one instance row. */
   async add(entry: ExternalAgentSettingsDirectoryEntry): Promise<void> { await this.store.saveDirectory(entry) }
   /** Remove one instance row and provider-owned metadata. */
-  async remove(provider: ExternalAgentProviderId, instanceId: string): Promise<void> { await this.store.removeDirectory(provider, instanceId) }
+  async remove(provider: ExternalAgentProviderId, instanceId: ExternalAgentProviderInstanceId): Promise<void> { await this.store.removeDirectory(provider, instanceId) }
   /** Dispatch a provider-specific Settings action. */
-  async runAction(provider: ExternalAgentProviderId, instanceId: string, action: string, value?: unknown): Promise<unknown> { return this.editors.require(provider, instanceId).run(action, value) }
+  async runAction(provider: ExternalAgentProviderId, instanceId: ExternalAgentProviderInstanceId, action: string, value?: unknown): Promise<unknown> { return this.editors.require(provider, instanceId).run(action, value) }
 }
-function key(provider: ExternalAgentProviderId, instanceId: string): string { return String(provider) + '\u0000' + instanceId }
+function key(provider: ExternalAgentProviderId, instanceId: ExternalAgentProviderInstanceId): string { return String(provider) + '\u0000' + instanceId }

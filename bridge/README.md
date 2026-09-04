@@ -7,10 +7,10 @@ repo has no DSH checkout, so DSH imports are peer conveniences only and the
 test suite runs against a fake host.
 
 Executable against a BridgeHost. Blocked against current DSH: current
-DSH exposes no honest extension point for any of the five capabilities,
-so the bridge ships the minimal integration contract plus a probe that
-fails loud against a DSH-shaped host. This package is the smallest host
-contract required upstream; it does not duplicate the provider seam
+DSH exposes no honest extension point for the runtime capabilities,
+so the bridge ships a runtime integration contract plus a probe that
+fails loud against a DSH-shaped host. Settings contribution and routable
+reporting remain separate upstream gaps outside BridgeHost; the bridge does not duplicate the provider seam
 (the other worktree owns spawning and CLI mapping).
 
 ## What it does
@@ -66,7 +66,8 @@ Verified read-only against the DSH source (0.1.1-rc.1):
 3. An external-agent session event (or a real out-of-repo registration
    surface) so delegated prompts and results are log-reconstructable.
 4. Agentless approval/question delegation for externally driven turns.
-5. Session-scoped routable reporting that understands external kinds.
+5. Session-scoped routable reporting that understands external kinds; this is not represented in BridgeHost.
+6. An External Agents Settings contribution slot for provider-owned editors; this is not represented in BridgeHost.
 
 ## Use
 
@@ -97,7 +98,7 @@ route, duplicate rejection.
 
 ## Status
 
-Bridge contract executable against BridgeHost (typecheck + 12 tests
+Bridge contract executable against BridgeHost (typecheck + 13 tests
 green). Blocked against current DSH: probeBridgeHost returns all
 six paths missing on a DSH-shaped host, which is the concrete
 missing upstream extension.

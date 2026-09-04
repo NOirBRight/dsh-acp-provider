@@ -10,8 +10,10 @@ declare const brandSymbol: unique symbol
 
 /** Nominal value crossing an External Agent boundary. */
 export type Branded<T, Kind extends string> = T & { readonly [brandSymbol]: Kind }
-/** Provider instance identifier. */
+/** Provider kind identifier. */
 export type ExternalAgentProviderId = Branded<string, 'ExternalAgentProviderId'>
+/** Independently mounted provider instance identifier. */
+export type ExternalAgentProviderInstanceId = Branded<string, 'ExternalAgentProviderInstanceId'>
 /** Provider model identifier. */
 export type ExternalAgentModelId = Branded<string, 'ExternalAgentModelId'>
 /** DSH-visible session identifier. */
@@ -31,6 +33,8 @@ function brand<T extends string, Kind extends string>(value: T, label: string): 
 }
 /** Brand a provider identifier at a configuration boundary. */
 export function providerId(value: string): ExternalAgentProviderId { return brand<string, 'ExternalAgentProviderId'>(value, 'provider id') }
+/** Brand a mounted provider instance identifier at a configuration boundary. */
+export function providerInstanceId(value: string): ExternalAgentProviderInstanceId { return brand<string, 'ExternalAgentProviderInstanceId'>(value, 'provider instance id') }
 /** Brand a model identifier at a configuration boundary. */
 export function modelId(value: string): ExternalAgentModelId { return brand<string, 'ExternalAgentModelId'>(value, 'model id') }
 /** Brand a session identifier at a persistence boundary. */
@@ -191,11 +195,14 @@ export interface ExternalAgentAttachment {
 /** Answers to one native question. */
 export interface ExternalAgentUserInputAnswers { readonly answers: readonly string[] }
 
+/** File location associated with native tool activity. */
+export interface ExternalAgentToolLocation { readonly path: string; readonly line?: number }
+
 /** Normalized activity visible to DSH; tool activity is never re-executed by DSH. */
 export type ExternalAgentEvent =
   | { readonly type: 'assistant-delta'; readonly text: string }
   | { readonly type: 'thought-delta'; readonly text: string }
-  | { readonly type: 'tool-activity'; readonly toolId: ExternalAgentToolId; readonly name: string; readonly status: 'pending' | 'running' | 'completed' | 'failed'; readonly input?: string; readonly output?: string; readonly error?: string; readonly locations?: readonly string[] }
+  | { readonly type: 'tool-activity'; readonly toolId: ExternalAgentToolId; readonly name: string; readonly status: 'pending' | 'running' | 'completed' | 'failed'; readonly input?: string; readonly output?: string; readonly error?: string; readonly locations?: readonly ExternalAgentToolLocation[] }
   | { readonly type: 'plan-update'; readonly summary: string; readonly steps: readonly string[] }
   | { readonly type: 'usage'; readonly inputTokens?: number; readonly outputTokens?: number }
   | { readonly type: 'notice'; readonly level: 'info' | 'warning' | 'error'; readonly message: string }

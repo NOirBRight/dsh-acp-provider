@@ -18,6 +18,7 @@ import {
   outcomeForOption,
   parseRouteSpecifier,
   providerId,
+  providerInstanceId,
   resumeCursor,
   sessionId,
   toolId,
@@ -215,6 +216,7 @@ describe('external-agent platform', () => {
     const turn = consumer.runTurn({ session: sessionId('disposing'), route: route('disposing'), prompt: 'go', permissionMode: 'approval-required', signal: new AbortController().signal, host: host(), onSessionEvent: async event => { if (event.type === 'route-selected') { entered(); await gate } } })
     await preparing
     const disposal = consumer.dispose()
+    expect(consumer.dispose()).toBe(disposal)
     release()
     await expect(disposal).resolves.toBeUndefined()
     await expect(turn).rejects.toThrow(/disposed/)
@@ -274,15 +276,16 @@ describe('external-agent platform', () => {
   it('joins Settings rows and reports unloaded editors', async () => {
     const store = new MemoryExternalAgentSettingsStore()
     const provider = providerId('settings-provider')
-    await store.saveDirectory({ provider, instanceId: 'a', displayName: 'A' })
-    store.seed({ provider, instanceId: 'a', values: { executable: '/bin/agy' } }, { provider, instanceId: 'a', authenticated: true, accountLabel: 'account' })
+    const instance = providerInstanceId('a')
+    await store.saveDirectory({ provider, instanceId: instance, displayName: 'A' })
+    store.seed({ provider, instanceId: instance, values: { executable: '/bin/agy' } }, { provider, instanceId: instance, authenticated: true, accountLabel: 'account' })
     const editors = new ExternalAgentSettingsEditorRegistry()
-    const dispose = editors.register({ provider, instanceId: 'a', snapshot: () => ({ provider, instanceId: 'a', title: 'A', status: { installed: true, authenticated: true, live: true, ready: true }, fields: [], actions: [] }), run: async () => 'ok' })
+    const dispose = editors.register({ provider, instanceId: instance, snapshot: () => ({ provider, instanceId: instance, title: 'A', status: { installed: true, authenticated: true, live: true, ready: true }, fields: [], actions: [] }), run: async () => 'ok' })
     const page = new ExternalAgentSettingsPageModel(store, editors)
     expect(page.snapshot().rows[0].credentials?.authenticated).toBe(true)
     dispose()
     expect(page.snapshot().rows[0].editor).toBeUndefined()
-    await expect(page.runAction(provider, 'a', 'refresh-models')).rejects.toThrow(ExternalAgentSettingsEditorUnavailableError)
+    await expect(page.runAction(provider, instance, 'refresh-models')).rejects.toThrow(ExternalAgentSettingsEditorUnavailableError)
   })
 
   it('mediates roots, symlink escapes and attachment writes', async () => {

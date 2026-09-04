@@ -49,6 +49,12 @@ function assertRoute(route: BridgeRoute): void {
   if (route.kind === 'external-agent' && route.models.length === 0) {
     throw new TypeError('dsh-bridge: external-agent route "' + route.id + '" must advertise at least one model');
   }
+  const models = new Set<string>();
+  for (const model of route.models) {
+    if (model.id.length === 0 || model.name.length === 0) throw new TypeError('dsh-bridge: route "' + route.id + '" has an empty model id or name');
+    if (models.has(model.id)) throw new TypeError('dsh-bridge: route "' + route.id + '" has duplicate model "' + model.id + '"');
+    models.add(model.id);
+  }
 }
 
 class BridgeImpl implements Bridge {
@@ -122,13 +128,11 @@ class BridgeImpl implements Bridge {
   }
 
   requestApproval(request: BridgeApprovalRequest): Promise<BridgeApprovalOutcome> {
-    this.assertLive();
-    return this.host.interaction.requestApproval(request);
+    return this.runInteraction(request.signal, signal => this.host.interaction.requestApproval({ ...request, signal }));
   }
 
   askUser(question: BridgeQuestion, options?: { signal?: AbortSignal }): Promise<string> {
-    this.assertLive();
-    return this.host.interaction.askUser(question, options);
+    return this.runInteraction(options?.signal, signal => this.host.interaction.askUser(question, { signal }));
   }
 
   dispose(): Promise<void> {
@@ -144,6 +148,22 @@ class BridgeImpl implements Bridge {
     for (const active of this.active) active.controller.abort();
     await Promise.all([...this.active].map(active => active.promise.catch(() => undefined)));
     if (unwindError !== undefined) throw unwindError;
+  }
+
+  private runInteraction<T>(signal: AbortSignal | undefined, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    this.assertLive();
+    const controller = new AbortController();
+    const abort = (): void => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted === true) controller.abort();
+    let active: { readonly controller: AbortController; readonly promise: Promise<unknown> };
+    const promise = Promise.resolve().then(() => run(controller.signal)).finally(() => {
+      signal?.removeEventListener('abort', abort);
+      this.active.delete(active);
+    });
+    active = { controller, promise };
+    this.active.add(active);
+    return promise;
   }
 
   private unwind(): void {

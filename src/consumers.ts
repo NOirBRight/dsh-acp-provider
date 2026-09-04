@@ -57,11 +57,6 @@ export interface ExternalAgentPrimaryTurnRequest extends ExternalAgentConsumerTu
   readonly turn?: ExternalAgentTurnId
   readonly signal: AbortSignal
 }
-/** Primary-session options. */
-export interface ExternalAgentPrimaryConsumerOptions {
-  readonly openSession?: (request: ExternalAgentOpenRequest) => Promise<ExternalAgentSession>
-}
-
 interface PrimarySlot {
   readonly key: string
   readonly route: Extract<SessionModelRoute, { kind: 'external-agent' }>
@@ -118,8 +113,9 @@ export class ExternalAgentPrimaryConsumer {
   private preparation: { readonly controller: AbortController; readonly promise: Promise<ExternalAgentTurnResult> } | undefined
   private selected: SessionModelRoute | undefined
   private disposed = false
+  private disposePromise: Promise<void> | undefined
 
-  constructor(private readonly registry: ExternalAgentProviderRegistry, private readonly options: ExternalAgentPrimaryConsumerOptions = {}) {}
+  constructor(private readonly registry: ExternalAgentProviderRegistry) {}
 
   /** Select a route; switching cancels and settles the active turn first. */
   async selectRoute(route: SessionModelRoute): Promise<void> {
@@ -214,15 +210,18 @@ export class ExternalAgentPrimaryConsumer {
   }
 
   /** Dispose all route cursors and active provider sessions. */
-  async dispose(): Promise<void> {
-    if (this.disposed) return
+  dispose(): Promise<void> {
+    if (this.disposePromise !== undefined) return this.disposePromise
     this.disposed = true
-    const preparation = this.preparation
-    preparation?.controller.abort()
-    await preparation?.promise.catch(() => undefined)
-    await this.cancelActive()
-    await Promise.all([...this.slots.values()].map(slot => slot.session?.dispose().catch(() => undefined)))
-    this.slots.clear()
+    this.disposePromise = (async () => {
+      const preparation = this.preparation
+      preparation?.controller.abort()
+      await preparation?.promise.catch(() => undefined)
+      await this.cancelActive()
+      await Promise.all([...this.slots.values()].map(slot => slot.session?.dispose().catch(() => undefined)))
+      this.slots.clear()
+    })()
+    return this.disposePromise
   }
 
   private async getSlot(request: ExternalAgentPrimaryTurnRequest, signal: AbortSignal): Promise<PrimarySlot> {
@@ -240,7 +239,7 @@ export class ExternalAgentPrimaryConsumer {
       ...(cursor === undefined ? {} : { resumeCursor: cursor }),
       signal,
     }
-    const session = this.options.openSession === undefined ? await this.registry.openSession(openRequest) : await this.options.openSession(openRequest)
+    const session = await this.registry.openSession(openRequest)
     const slot = existing ?? { key, route }
     slot.session = session
     if (cursor !== undefined) slot.cursor = cursor
@@ -275,6 +274,7 @@ export interface ExternalAgentJob {
  */
 export class ExternalAgentSubagentConsumer {
   private disposed = false
+  private disposePromise: Promise<void> | undefined
   private readonly active = new Map<ExternalAgentJobId, { readonly controller: AbortController; readonly promise: Promise<ExternalAgentTurnResult> }>()
   constructor(private readonly registry: ExternalAgentProviderRegistry) {}
 
@@ -289,11 +289,14 @@ export class ExternalAgentSubagentConsumer {
   }
 
   /** Cancel active children and await their provider-session disposers. */
-  async dispose(): Promise<void> {
-    if (this.disposed) return
+  dispose(): Promise<void> {
+    if (this.disposePromise !== undefined) return this.disposePromise
     this.disposed = true
-    for (const child of this.active.values()) child.controller.abort()
-    await Promise.all([...this.active.values()].map(child => child.promise.catch(() => undefined)))
+    this.disposePromise = (async () => {
+      for (const child of this.active.values()) child.controller.abort()
+      await Promise.all([...this.active.values()].map(child => child.promise.catch(() => undefined)))
+    })()
+    return this.disposePromise
   }
 
   private runWithController(request: ExternalAgentSubagentRequest, controller: AbortController): Promise<ExternalAgentTurnResult> {

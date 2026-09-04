@@ -41,7 +41,7 @@ function eventTextSlots(event: ExternalAgentEvent): readonly EventTextSlot[] {
     case 'tool-activity': return [
       { value: event.name, apply: (candidate, value) => ({ ...candidate, name: value } as ExternalAgentEvent) },
       ...(['input', 'output', 'error'] as const).flatMap(key => event[key] === undefined ? [] : [{ value: event[key], apply: (candidate: ExternalAgentEvent, value: string) => ({ ...candidate, [key]: value } as ExternalAgentEvent) }]),
-      ...(event.locations ?? []).map((location, index) => ({ value: location, apply: (candidate: ExternalAgentEvent, value: string) => candidate.type === 'tool-activity' ? { ...candidate, locations: candidate.locations?.map((item, itemIndex) => itemIndex === index ? value : item) } : candidate })),
+      ...(event.locations ?? []).map((location, index) => ({ value: location.path, apply: (candidate: ExternalAgentEvent, value: string) => candidate.type === 'tool-activity' ? { ...candidate, locations: candidate.locations?.map((item, itemIndex) => itemIndex === index ? { ...item, path: value } : item) } : candidate })),
     ]
     case 'plan-update': return [
       { value: event.summary, apply: (candidate, value) => ({ ...candidate, summary: value } as ExternalAgentEvent) },
@@ -89,7 +89,12 @@ function boundPermissionRequest(request: ExternalAgentPermissionRequest, bounds:
   if (payloadBytes(result) > bounds.maxPayloadBytes) throw new RangeError('external-agent permission request exceeds maxPayloadBytes')
   return result
 }
-function boundUserInputRequest(request: ExternalAgentUserInputRequest, bounds: ExternalAgentEventBounds): ExternalAgentUserInputRequest {
+/** Bound one user-input request before a provider calls the host.
+ * @param request - normalized user-input request.
+ * @param bounds - complete payload and per-text byte limits.
+ * @returns a bounded copy preserving request identity.
+ */
+export function boundExternalAgentUserInputRequest(request: ExternalAgentUserInputRequest, bounds: ExternalAgentEventBounds): ExternalAgentUserInputRequest {
   const result: ExternalAgentUserInputRequest = {
     requestId: request.requestId,
     question: truncateUtf8(request.question, bounds.maxTextBytes),
@@ -105,7 +110,7 @@ export function withBoundedExternalAgentHost(host: ExternalAgentTurnHost, bounds
     ...(host.signal === undefined ? {} : { signal: host.signal }),
     publish: event => host.publish(boundExternalAgentEvent(event, bounds)),
     requestPermission: request => host.requestPermission(boundPermissionRequest(request, bounds)),
-    requestUserInput: request => host.requestUserInput(boundUserInputRequest(request, bounds)),
+    requestUserInput: request => host.requestUserInput(boundExternalAgentUserInputRequest(request, bounds)),
   }
 }
 

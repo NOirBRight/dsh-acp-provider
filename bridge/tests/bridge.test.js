@@ -82,6 +82,8 @@ describe('directory contribution with explicit route kind', () => {
       () => createBridge(host, { routes: [{ id: 'x', displayName: 'X', kind: 'external-agent', models: [] }], runner }),
       /at least one model/,
     );
+    assert.throws(() => createBridge(host, { routes: [{ id: 'x', displayName: 'X', kind: 'external-agent', models: [{ id: '', name: 'X' }] }], runner }), /empty model/);
+    assert.throws(() => createBridge(host, { routes: [{ id: 'x', displayName: 'X', kind: 'external-agent', models: [{ id: 'same', name: 'A' }, { id: 'same', name: 'B' }] }], runner }), /duplicate model/);
   });
 
   it('rejects duplicate route ids', () => {
@@ -166,7 +168,9 @@ describe('approval and question delegation', () => {
     const host = fakeHost();
     const bridge = createBridge(host, { routes: ROUTES, runner });
     assert.equal(await bridge.requestApproval({ sessionId: 's1', toolName: 'run', reason: 'why' }), 'allowed-once');
-    assert.deepEqual(host.lastApproval, { sessionId: 's1', toolName: 'run', reason: 'why' });
+    assert.equal(host.lastApproval.sessionId, 's1');
+    assert.equal(host.lastApproval.toolName, 'run');
+    assert.equal(host.lastApproval.reason, 'why');
     assert.equal(await bridge.askUser({ id: 'q1', question: 'proceed?' }), 'answer');
     assert.equal(host.lastQuestion.question.id, 'q1');
     await bridge.dispose();
@@ -190,6 +194,24 @@ describe('disposal', () => {
     release({ stopReason: 'aborted', outputText: '' });
     await disposal;
     assert.deepEqual(await turn, { handled: true, result: { stopReason: 'aborted', outputText: '' } });
+  });
+
+  it('aborts and awaits an in-flight interaction', async () => {
+    const host = fakeHost();
+    let release;
+    let aborted = false;
+    host.interaction.askUser = (_question, options) => new Promise(resolve => { options.signal.addEventListener('abort', () => { aborted = true; }); release = resolve; });
+    const bridge = createBridge(host, { routes: ROUTES, runner });
+    const interaction = bridge.askUser({ id: 'q1', question: 'wait?' });
+    await Promise.resolve();
+    let disposed = false;
+    const disposal = bridge.dispose().then(() => { disposed = true; });
+    await Promise.resolve();
+    assert.equal(aborted, true);
+    assert.equal(disposed, false);
+    release('cancelled');
+    assert.equal(await interaction, 'cancelled');
+    await disposal;
   });
 
   it('unregisters routes and the driver; use after dispose throws', async () => {

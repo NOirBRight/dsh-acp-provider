@@ -58,6 +58,7 @@ export class ManagedExternalAgentSession implements ExternalAgentSession {
   readonly ref: ExternalAgentSessionRef
   readonly supportedModes: readonly ExternalAgentPermissionMode[]
   private disposed = false
+  private disposePromise: Promise<void> | undefined
   private activeController: AbortController | undefined
   private activeHost: ExternalAgentTurnHostController | undefined
   private activeTurn: Promise<ExternalAgentTurnResult> | undefined
@@ -66,7 +67,7 @@ export class ManagedExternalAgentSession implements ExternalAgentSession {
     this.ref = inner.ref
     this.supportedModes = inner.supportedModes
   }
-  /** Whether dispose has completed its ownership transition. */
+  /** Whether disposal has begun and new turns are rejected. */
   get isDisposed(): boolean { return this.disposed }
   /** Run one turn with a fresh host and a provider-owned cancellation signal. */
   async runTurn(request: ExternalAgentTurnRequest, host: ExternalAgentTurnHost): Promise<ExternalAgentTurnResult> {
@@ -101,13 +102,16 @@ export class ManagedExternalAgentSession implements ExternalAgentSession {
     }
   }
   /** Cancel the active turn, await it, and release the native session. */
-  async dispose(): Promise<void> {
-    if (this.disposed) return
+  dispose(): Promise<void> {
+    if (this.disposePromise !== undefined) return this.disposePromise
     this.disposed = true
-    this.activeController?.abort()
-    this.activeHost?.expire()
-    await this.activeTurn?.catch(() => undefined)
-    await this.inner.dispose()
+    this.disposePromise = (async () => {
+      this.activeController?.abort()
+      this.activeHost?.expire()
+      await this.activeTurn?.catch(() => undefined)
+      await this.inner.dispose()
+    })()
+    return this.disposePromise
   }
 }
 
@@ -125,15 +129,17 @@ export class ExternalAgentProviderRegistry {
     this.providers.set(id, provider)
     const sessions = new Set<ExternalAgentSession>()
     this.sessions.set(id, sessions)
-    let active = true
-    return async (): Promise<void> => {
-      if (!active) return
-      active = false
+    let disposal: Promise<void> | undefined
+    return (): Promise<void> => {
+      if (disposal !== undefined) return disposal
       if (this.providers.get(id) === provider) this.providers.delete(id)
       this.sessions.delete(id)
-      await Promise.all([...sessions].map(session => session.dispose().catch(() => undefined)))
-      await provider.dispose?.()
-      sessions.clear()
+      disposal = (async () => {
+        await Promise.all([...sessions].map(session => session.dispose().catch(() => undefined)))
+        await provider.dispose?.()
+        sessions.clear()
+      })()
+      return disposal
     }
   }
   /** Return a provider or throw an exact availability error. */
@@ -174,11 +180,15 @@ export class ExternalAgentProviderRegistry {
       await session.dispose()
       throw new RouteResolutionError('external-agent provider was disposed while opening a session: ' + route.provider)
     }
+    let disposal: Promise<void> | undefined
     const tracked: ExternalAgentSession = {
       ref: session.ref,
       supportedModes: session.supportedModes,
       runTurn: (turnRequest, turnHost) => session.runTurn(turnRequest, turnHost),
-      dispose: async () => { try { await session.dispose() } finally { sessions.delete(tracked) } },
+      dispose: () => {
+        disposal ??= session.dispose().finally(() => { sessions.delete(tracked) })
+        return disposal
+      },
     }
     sessions.add(tracked)
     return tracked

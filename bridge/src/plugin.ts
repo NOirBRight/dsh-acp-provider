@@ -9,7 +9,7 @@
  */
 
 import { createBridge } from './bridge.ts';
-import type { Bridge, BridgeConfig } from './bridge.ts';
+import type { BridgeConfig } from './bridge.ts';
 import { bridgeModelId, bridgeRouteId } from './contracts.ts';
 import type { BridgeDriveOutcome, BridgeModel, BridgeRoute, BridgeTurnRequest } from './contracts.ts';
 import { probeBridgeHost } from './current-dsh.ts';
@@ -33,9 +33,6 @@ export interface Config {
 export interface BridgeRunnerSlot {
   (request: BridgeTurnRequest): Promise<BridgeDriveOutcome>;
 }
-
-/** Live plugin state: the mounted bridge, disposed with the fiber. */
-let live: Bridge | undefined;
 
 /**
  * Validate one configured route at the earliest resolvable point.

@@ -2,11 +2,11 @@
 
 ## Decision
 
-Keep DSH composition in bridge/ as an out-of-tree adapter contract. The bridge probes the installed host before mounting and throws when required route, turn-driver, session-event, interaction, or Settings capabilities are absent.
+Keep DSH composition in bridge/ as an out-of-tree adapter contract. The bridge probes the installed host before mounting and throws when required route, turn-driver, session-event, or interaction capabilities are absent.
 
 ## Current behavior
 
-createBridge() can register external-agent routes, dispatch primary turns, fold stored session events, delegate approval and question interactions, and dispose quiescently when the host implements BridgeHost. The Cordis patch is opt-in and contributes no routes by default.
+createBridge() can register external-agent routes, dispatch primary turns, fold stored session events, delegate approval and question interactions, and dispose quiescently when the host implements BridgeHost. The Cordis patch is opt-in and contributes no routes by default. Settings contribution and routable reporting remain outside BridgeHost.
 
 Against the current DSH checkout, the host probe reports missing required capabilities. The blocked-composition test asserts the failure, so the bridge cannot be mistaken for a complete in-tree DSH integration.
 
