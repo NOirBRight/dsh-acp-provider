@@ -72,8 +72,10 @@ describe('external-agent platform', () => {
     const provider = new FakeExternalAgentProvider('secure', [{ id: 'coder', supportedModes: modes }], { auditFullAccess: () => undefined })
     registry.register(provider)
     await expect(registry.openSession(openRequest('secure', 'full-access'))).rejects.toThrow(FullAccessConfirmationError)
+    expect(provider.listModelsCalls).toBe(0)
     const session = await registry.openSession({ ...openRequest('secure', 'full-access'), fullAccessConfirmed: true, fullAccessAuditId: 'audit-1' })
     expect(audit).toHaveLength(1)
+    expect(provider.listModelsCalls).toBe(1)
     await session.dispose()
   })
 
@@ -124,6 +126,9 @@ describe('external-agent platform', () => {
   })
 
   it('bounds complete event and interaction payloads', async () => {
+    expect(() => new BoundedEventLog({ maxEvents: 0 })).toThrow(/maxEvents/)
+    expect(() => new BoundedEventLog({ maxTextBytes: -1 })).toThrow(/maxTextBytes/)
+    expect(() => new BoundedEventLog({ maxPayloadBytes: 0 })).toThrow(/maxPayloadBytes/)
     const event = boundExternalAgentEvent({ type: 'tool-activity', toolId: '工具'.repeat(20), name: 'x'.repeat(100), status: 'completed', input: '😀'.repeat(100) }, { maxTextBytes: 64, maxPayloadBytes: 160 })
     expect(new TextEncoder().encode(JSON.stringify(event)).byteLength).toBeLessThanOrEqual(160)
     const seen: string[] = []

@@ -41,18 +41,22 @@ export interface ExternalAgentConsumerCallbacks {
   readonly host: ExternalAgentTurnHostCallbacks
   readonly onSessionEvent?: (event: ExternalAgentConsumerEvent) => void | Promise<void>
 }
-/** Primary-session turn request. */
-export interface ExternalAgentPrimaryTurnRequest extends ExternalAgentConsumerCallbacks {
-  readonly session: ExternalAgentSessionId
-  readonly route: SessionModelRoute
-  readonly turn?: ExternalAgentTurnId
+/** Turn fields shared by primary-session and subagent consumers. */
+export interface ExternalAgentConsumerTurnInput extends ExternalAgentConsumerCallbacks {
   readonly prompt: string
   readonly attachments?: ExternalAgentTurnRequest['attachments']
   readonly permissionMode: ExternalAgentTurnRequest['permissionMode']
-  readonly signal: AbortSignal
   readonly fullAccessConfirmed?: boolean
   readonly fullAccessAuditId?: string
   readonly clientFilesystem?: ExternalAgentOpenRequest['clientFilesystem']
+}
+
+/** Primary-session turn request. */
+export interface ExternalAgentPrimaryTurnRequest extends ExternalAgentConsumerTurnInput {
+  readonly session: ExternalAgentSessionId
+  readonly route: SessionModelRoute
+  readonly turn?: ExternalAgentTurnId
+  readonly signal: AbortSignal
 }
 /** Primary-session options. */
 export interface ExternalAgentPrimaryConsumerOptions {
@@ -218,21 +222,15 @@ export class ExternalAgentPrimaryConsumer {
 }
 
 /** Subagent request with explicit parent authority and foreground/background mode. */
-export interface ExternalAgentSubagentRequest extends ExternalAgentConsumerCallbacks {
+export interface ExternalAgentSubagentRequest extends ExternalAgentConsumerTurnInput {
   readonly jobId: ExternalAgentJobId
   readonly parentSession: ExternalAgentSessionId
   readonly route: Extract<SessionModelRoute, { kind: 'external-agent' }>
-  readonly prompt: string
-  readonly permissionMode: ExternalAgentTurnRequest['permissionMode']
   readonly signal?: AbortSignal
-  readonly fullAccessConfirmed?: boolean
-  readonly fullAccessAuditId?: string
-  readonly clientFilesystem?: ExternalAgentOpenRequest['clientFilesystem']
-  readonly attachments?: ExternalAgentTurnRequest['attachments']
 }
 /** Background Job handle; cancellation is the only out-of-band operation. */
 export interface ExternalAgentJob {
-  readonly id: string
+  readonly id: ExternalAgentJobId
   readonly result: Promise<ExternalAgentTurnResult>
   cancel(): void
 }
@@ -290,6 +288,9 @@ export class ExternalAgentSubagentConsumer {
       const result = await session.runTurn({ turn: turnId(request.jobId), prompt: request.prompt, ...(request.attachments === undefined ? {} : { attachments: request.attachments }), permissionMode: request.permissionMode, signal: controller.signal }, request.host)
       await request.onSessionEvent?.({ type: 'subagent-result', jobId: request.jobId, result })
       return result
+    } catch (error) {
+      if (controller.signal.aborted) return { status: 'cancelled', text: '' }
+      throw error
     } finally {
       request.signal?.removeEventListener('abort', forward)
       await session?.dispose()

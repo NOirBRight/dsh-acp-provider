@@ -167,13 +167,6 @@ export function outcomeForOption(option: ExternalAgentPermissionOption): 'allowe
 }
 /** Whether a request exposes a native session-scoped grant. */
 export function offersAllowAlways(options: readonly ExternalAgentPermissionOption[]): boolean { return options.some(option => option.kind === 'allow_always' && option.scope !== undefined) }
-/** Compatibility names for provider-neutral event and interaction types. */
-export type PermissionMode = ExternalAgentPermissionMode
-export type PermissionOption = ExternalAgentPermissionOption
-export type PermissionRequest = ExternalAgentPermissionRequest
-export type PermissionOutcome = 'allowed-once' | 'allowed-for-session' | 'rejected' | 'cancelled' | 'unavailable'
-export type ActivityEvent = ExternalAgentEvent
-
 /** Question emitted by a native provider. */
 export interface ExternalAgentUserInputRequest {
   readonly requestId: ExternalAgentOptionId
@@ -266,11 +259,8 @@ export interface ExternalAgentTurnHostCallbacks {
   requestUserInput(request: ExternalAgentUserInputRequest): Promise<ExternalAgentUserInputAnswers>
 }
 /** Turn-scoped authority handed to a provider; all operations fail after expiry. */
-export interface ExternalAgentTurnHost {
+export interface ExternalAgentTurnHost extends ExternalAgentTurnHostCallbacks {
   readonly signal?: AbortSignal
-  publish(event: ExternalAgentEvent): void | Promise<void>
-  requestPermission(request: ExternalAgentPermissionRequest): Promise<ExternalAgentPermissionDecision>
-  requestUserInput(request: ExternalAgentUserInputRequest): Promise<ExternalAgentUserInputAnswers>
 }
 /** Controller used by the session runner to expire a turn host. */
 export interface ExternalAgentTurnHostController extends ExternalAgentTurnHost {
@@ -374,7 +364,9 @@ export interface ResolvedExternalAgentRoute {
 export async function resolveExternalAgentRoute(registry: ExternalAgentProviderRegistry, route: SessionModelRoute, signal?: AbortSignal): Promise<ResolvedExternalAgentRoute> {
   if (route.kind !== 'external-agent') throw new RouteResolutionError('route kind is not external-agent: ' + route.kind)
   const provider = registry.require(route.provider)
-  const model = (await provider.listModels(signal)).find(candidate => candidate.id === route.model)
+  const models = await provider.listModels(signal)
+  if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
+  const model = models.find(candidate => candidate.id === route.model)
   if (model === undefined) throw new RouteResolutionError('external-agent model is unavailable: ' + route.provider + '/' + route.model)
   return { provider, model, route }
 }
@@ -491,9 +483,9 @@ export class ExternalAgentProviderRegistry {
   async openSession(request: ExternalAgentOpenRequest): Promise<ExternalAgentSession> {
     const route = request.route
     if (route.kind !== 'external-agent') throw new RouteResolutionError('route kind is not external-agent: ' + route.kind)
+    await authorizeExternalAgentOpen(request, this.options.auditFullAccess)
     const resolved = await resolveExternalAgentRoute(this, route, request.signal)
     if (!resolved.model.supportedModes.includes(request.permissionMode)) throw new UnsupportedModeError('mode ' + request.permissionMode + ' is not supported by ' + route.provider + '/' + route.model)
-    await authorizeExternalAgentOpen(request, this.options.auditFullAccess)
     const raw = await resolved.provider.openSession(request)
     const session = raw instanceof ManagedExternalAgentSession ? raw : new ManagedExternalAgentSession(raw)
     const sessions = this.sessions.get(route.provider)
@@ -649,8 +641,14 @@ export class BoundedEventLog {
   private readonly maxEvents: number
   private readonly bounds: ExternalAgentEventBounds
   constructor(options: BoundedEventLogOptions = {}) {
-    this.maxEvents = Math.max(1, options.maxEvents ?? 500)
-    this.bounds = { maxTextBytes: Math.max(0, options.maxTextBytes ?? 4000), maxPayloadBytes: Math.max(1, options.maxPayloadBytes ?? 16 * 1024 * 1024) }
+    const maxEvents = options.maxEvents ?? 500
+    const maxTextBytes = options.maxTextBytes ?? 4000
+    const maxPayloadBytes = options.maxPayloadBytes ?? 16 * 1024 * 1024
+    if (!Number.isSafeInteger(maxEvents) || maxEvents < 1) throw new RangeError('maxEvents must be a positive safe integer')
+    if (!Number.isSafeInteger(maxTextBytes) || maxTextBytes < 0) throw new RangeError('maxTextBytes must be a non-negative safe integer')
+    if (!Number.isSafeInteger(maxPayloadBytes) || maxPayloadBytes < 1) throw new RangeError('maxPayloadBytes must be a positive safe integer')
+    this.maxEvents = maxEvents
+    this.bounds = { maxTextBytes, maxPayloadBytes }
   }
   /** Push one bounded event. */
   push(event: ExternalAgentEvent): void {

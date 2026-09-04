@@ -103,6 +103,7 @@ export class FakeExternalAgentProvider implements ExternalAgentProvider {
   private readonly scripts: FakeExternalAgentScript[]
   private readonly sessions = new Set<ExternalAgentSession>()
   private sequence = 0
+  listModelsCalls = 0
   private readonly options: FakeExternalAgentProviderOptions
   constructor(name: string, models: readonly FakeExternalAgentModel[], options: FakeExternalAgentProviderOptions = {}) {
     this.info = { id: providerId(name), name, description: 'Deterministic External Agent test provider' }
@@ -112,6 +113,7 @@ export class FakeExternalAgentProvider implements ExternalAgentProvider {
   }
   /** Models advertised by this exact fake provider. */
   async listModels(signal?: AbortSignal): Promise<readonly ExternalAgentModel[]> {
+    this.listModelsCalls += 1
     if (signal?.aborted) return []
     return this.models
   }
