@@ -22,7 +22,7 @@ Given a BridgeHost and a deployment runner, the bridge:
 - dispatches as the primary turn driver for external-agent routes only,
   without a synthetic LlmAdapter and without ctx.subagents.start;
 - reads and folds stored events from the selected session;
-- delegates approval and user questions agentlessly to the host;
+- delegates approval options, native ids, session/thread scopes, security warnings, and user questions agentlessly to the host;
 - unwinds route and primary-driver registrations through dispose.
 
 ## The honest gap
@@ -92,7 +92,7 @@ route, duplicate rejection.
 - src/current-dsh.ts: probeBridgeHost + REQUIRED_HOST_PATHS.
 - src/bridge.ts: createBridge (register routes, drive, project,
   delegate interactions, dispose).
-- tests/bridge.test.js: 12 public-behavior tests against the fake
+- tests/bridge.test.js: 13 public-behavior tests against the fake
   host, including the blocked-DSH composition case.
 - cordis.patch.yml: optional single-row mount.
 

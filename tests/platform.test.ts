@@ -9,10 +9,12 @@ import {
   TurnAbortedError,
   UnscopedAllowAlwaysError,
   UnsupportedModeError,
+  auditId,
   boundExternalAgentEvent,
   createExternalAgentTurnHost,
   createSessionModelRoute,
   jobId,
+  modelId,
   offersAllowAlways,
   optionId,
   outcomeForOption,
@@ -47,6 +49,8 @@ describe('external-agent platform', () => {
     expect(parseRouteSpecifier('external-agent:acme/coder')).toEqual(route('acme'))
     expect(() => parseRouteSpecifier('llm:')).toThrow(RouteResolutionError)
     expect(() => parseRouteSpecifier('external-agent:acme/coder/extra')).toThrow(RouteResolutionError)
+    expect(() => providerId('acme/other')).toThrow(/must not contain/)
+    expect(() => modelId('coder/other')).toThrow(/must not contain/)
     expect(() => parseRouteSpecifier('coder')).toThrow(RouteResolutionError)
   })
 
@@ -95,7 +99,7 @@ describe('external-agent platform', () => {
     registry.register(provider)
     await expect(registry.openSession(openRequest('secure', 'full-access'))).rejects.toThrow(FullAccessConfirmationError)
     expect(provider.listModelsCalls).toBe(0)
-    const session = await registry.openSession({ ...openRequest('secure', 'full-access'), fullAccessConfirmed: true, fullAccessAuditId: 'audit-1' })
+    const session = await registry.openSession({ ...openRequest('secure', 'full-access'), fullAccessConfirmed: true, fullAccessAuditId: auditId('audit-1') })
     expect(audit).toHaveLength(1)
     expect(provider.listModelsCalls).toBe(1)
     await session.dispose()
@@ -172,6 +176,20 @@ describe('external-agent platform', () => {
     expect((await consumer.runTurn(request('one', 't1'))).text).toBe('one')
     expect((await consumer.runTurn(request('two', 't2'))).text).toBe('two')
     expect(sessionEvents).toEqual(expect.arrayContaining(['host-assistant-delta', 'activity', 'permission-pending', 'permission-committed', 'turn-finished']))
+    await consumer.dispose()
+  })
+
+  it('reaudits full access when a reused primary route escalates mode', async () => {
+    const audits: string[] = []
+    const provider = new FakeExternalAgentProvider('escalation', [{ id: 'coder', supportedModes: modes }], { scripts: [{ result: { text: 'safe' } }, { result: { text: 'elevated' } }], auditFullAccess: async () => undefined })
+    const registry = new ExternalAgentProviderRegistry({ auditFullAccess: async confirmation => { audits.push(String(confirmation.auditId)) } })
+    registry.register(provider)
+    const consumer = new ExternalAgentPrimaryConsumer(registry)
+    const base = { session: sessionId('primary'), route: route('escalation'), prompt: 'go', signal: new AbortController().signal, host: host() }
+    await expect(consumer.runTurn({ ...base, permissionMode: 'approval-required' })).resolves.toMatchObject({ text: 'safe' })
+    await expect(consumer.runTurn({ ...base, permissionMode: 'full-access' })).rejects.toThrow(FullAccessConfirmationError)
+    await expect(consumer.runTurn({ ...base, permissionMode: 'full-access', fullAccessConfirmed: true, fullAccessAuditId: auditId('escalation-audit') })).resolves.toMatchObject({ text: 'elevated' })
+    expect(audits).toEqual(['escalation-audit'])
     await consumer.dispose()
   })
 

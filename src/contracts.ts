@@ -14,6 +14,8 @@ export type Branded<T, Kind extends string> = T & { readonly [brandSymbol]: Kind
 export type ExternalAgentProviderId = Branded<string, 'ExternalAgentProviderId'>
 /** Independently mounted provider instance identifier. */
 export type ExternalAgentProviderInstanceId = Branded<string, 'ExternalAgentProviderInstanceId'>
+/** Full-access audit correlation identifier. */
+export type ExternalAgentAuditId = Branded<string, 'ExternalAgentAuditId'>
 /** Provider model identifier. */
 export type ExternalAgentModelId = Branded<string, 'ExternalAgentModelId'>
 /** DSH-visible session identifier. */
@@ -32,11 +34,19 @@ function brand<T extends string, Kind extends string>(value: T, label: string): 
   return value as Branded<T, Kind>
 }
 /** Brand a provider identifier at a configuration boundary. */
-export function providerId(value: string): ExternalAgentProviderId { return brand<string, 'ExternalAgentProviderId'>(value, 'provider id') }
+export function providerId(value: string): ExternalAgentProviderId {
+  if (value.includes('/')) throw new TypeError('provider id must not contain /')
+  return brand<string, 'ExternalAgentProviderId'>(value, 'provider id')
+}
 /** Brand a mounted provider instance identifier at a configuration boundary. */
 export function providerInstanceId(value: string): ExternalAgentProviderInstanceId { return brand<string, 'ExternalAgentProviderInstanceId'>(value, 'provider instance id') }
+/** Brand a full-access audit identifier at an interaction boundary. */
+export function auditId(value: string): ExternalAgentAuditId { return brand<string, 'ExternalAgentAuditId'>(value, 'audit id') }
 /** Brand a model identifier at a configuration boundary. */
-export function modelId(value: string): ExternalAgentModelId { return brand<string, 'ExternalAgentModelId'>(value, 'model id') }
+export function modelId(value: string): ExternalAgentModelId {
+  if (value.includes('/')) throw new TypeError('model id must not contain /')
+  return brand<string, 'ExternalAgentModelId'>(value, 'model id')
+}
 /** Brand a session identifier at a persistence boundary. */
 export function sessionId(value: string): ExternalAgentSessionId { return brand<string, 'ExternalAgentSessionId'>(value, 'session id') }
 /** Brand a turn identifier at a request boundary. */
@@ -251,7 +261,7 @@ export interface ExternalAgentOpenRequest {
   readonly permissionMode: ExternalAgentPermissionMode
   readonly resumeCursor?: ExternalAgentResumeCursor
   readonly fullAccessConfirmed?: boolean
-  readonly fullAccessAuditId?: string
+  readonly fullAccessAuditId?: ExternalAgentAuditId
   readonly workspaceRoot?: string
   readonly attachmentRoots?: readonly string[]
   readonly clientFilesystem?: ExternalAgentFilesystem
@@ -326,7 +336,7 @@ export interface ExternalAgentFullAccessAudit {
   readonly provider: ExternalAgentProviderId
   readonly session: ExternalAgentSessionId
   readonly mode: 'full-access'
-  readonly auditId?: string
+  readonly auditId?: ExternalAgentAuditId
 }
 /** Callback that records a value-free full-access event. */
 export type ExternalAgentFullAccessAuditor = (entry: ExternalAgentFullAccessAudit) => void | Promise<void>

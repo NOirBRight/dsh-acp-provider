@@ -23,10 +23,14 @@ export type BridgeModelId = BridgeId<'model'>
 export type BridgeSessionId = BridgeId<'session'>
 /** Human-question identifier crossing the bridge. */
 export type BridgeQuestionId = BridgeId<'question'>
+/** Native approval option identifier. */
+export type BridgeApprovalOptionId = BridgeId<'approval-option'>
 /** Brand a validated route identifier. */
 export function bridgeRouteId(value: string): BridgeRouteId { return value as BridgeRouteId }
 /** Brand a validated model identifier. */
 export function bridgeModelId(value: string): BridgeModelId { return value as BridgeModelId }
+/** Brand one native approval option id at the host boundary. */
+export function bridgeApprovalOptionId(value: string): BridgeApprovalOptionId { return value as BridgeApprovalOptionId }
 
 /** One selectable model inside a route. */
 export interface BridgeModel {
@@ -90,16 +94,33 @@ export interface BridgeSessionEvent {
   readonly data: unknown
 }
 
+/** Native approval option displayed without changing its provider-owned id. */
+export interface BridgeApprovalOption {
+  readonly id: BridgeApprovalOptionId
+  readonly kind: 'allow-once' | 'allow-always' | 'reject' | 'cancel'
+  readonly label: string
+  readonly scope?: 'session' | 'thread'
+}
+
+/** Security warning attached to one native approval. */
+export interface BridgeApprovalSecurityWarning { readonly message: string; readonly severity: 'warning' | 'danger' }
+
 /** Agentless approval question forwarded to the host. */
 export interface BridgeApprovalRequest {
   readonly sessionId: BridgeSessionId
   readonly toolName: string
   readonly reason?: string
+  readonly options: readonly BridgeApprovalOption[]
+  readonly securityWarning?: BridgeApprovalSecurityWarning
   readonly signal?: AbortSignal
 }
 
-/** Closed approval outcome vocabulary. */
-export type BridgeApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+/** Closed approval outcome preserving the selected native option id and scope. */
+export type BridgeApprovalOutcome =
+  | { readonly kind: 'allowed-once'; readonly optionId: BridgeApprovalOptionId }
+  | { readonly kind: 'allowed-for-session'; readonly optionId: BridgeApprovalOptionId; readonly scope: 'session' | 'thread' }
+  | { readonly kind: 'rejected'; readonly optionId: BridgeApprovalOptionId }
+  | { readonly kind: 'cancelled' | 'unavailable' }
 
 /** One human question forwarded to the host. */
 export interface BridgeQuestion {

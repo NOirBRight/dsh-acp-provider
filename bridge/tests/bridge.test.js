@@ -29,7 +29,7 @@ function fakeHost(overrides = {}) {
     interaction: {
       async requestApproval(request) {
         host.lastApproval = request;
-        return 'allowed-once';
+        return { kind: 'allowed-for-session', optionId: 'always', scope: 'session' };
       },
       async askUser(question, options) {
         host.lastQuestion = { question, signal: options?.signal };
@@ -167,10 +167,13 @@ describe('approval and question delegation', () => {
   it('forwards agentless approval and questions to the host', async () => {
     const host = fakeHost();
     const bridge = createBridge(host, { routes: ROUTES, runner });
-    assert.equal(await bridge.requestApproval({ sessionId: 's1', toolName: 'run', reason: 'why' }), 'allowed-once');
+    const approval = await bridge.requestApproval({ sessionId: 's1', toolName: 'run', reason: 'why', options: [{ id: 'once', kind: 'allow-once', label: 'Allow once' }, { id: 'always', kind: 'allow-always', label: 'Allow for session', scope: 'session' }], securityWarning: { message: 'Native terminal has broader access.', severity: 'danger' } });
+    assert.deepEqual(approval, { kind: 'allowed-for-session', optionId: 'always', scope: 'session' });
     assert.equal(host.lastApproval.sessionId, 's1');
     assert.equal(host.lastApproval.toolName, 'run');
     assert.equal(host.lastApproval.reason, 'why');
+    assert.equal(host.lastApproval.options[1].scope, 'session');
+    assert.equal(host.lastApproval.securityWarning.severity, 'danger');
     assert.equal(await bridge.askUser({ id: 'q1', question: 'proceed?' }), 'answer');
     assert.equal(host.lastQuestion.question.id, 'q1');
     await bridge.dispose();

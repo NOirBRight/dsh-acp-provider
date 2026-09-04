@@ -46,7 +46,7 @@ export interface ExternalAgentConsumerTurnInput extends ExternalAgentConsumerCal
   readonly attachments?: ExternalAgentTurnRequest['attachments']
   readonly permissionMode: ExternalAgentTurnRequest['permissionMode']
   readonly fullAccessConfirmed?: boolean
-  readonly fullAccessAuditId?: string
+  readonly fullAccessAuditId?: ExternalAgentOpenRequest['fullAccessAuditId']
   readonly clientFilesystem?: ExternalAgentOpenRequest['clientFilesystem']
 }
 
@@ -61,6 +61,7 @@ interface PrimarySlot {
   readonly key: string
   readonly route: Extract<SessionModelRoute, { kind: 'external-agent' }>
   session?: ExternalAgentSession
+  permissionMode?: ExternalAgentTurnRequest['permissionMode']
   cursor?: ExternalAgentResumeCursor
 }
 
@@ -229,7 +230,12 @@ export class ExternalAgentPrimaryConsumer {
     if (route.kind !== 'external-agent') throw new RouteResolutionError('primary consumer requires an external-agent route')
     const key = this.routeKey(route)
     const existing = this.slots.get(key)
-    if (existing?.session !== undefined) return existing
+    if (existing?.session !== undefined && existing.permissionMode === request.permissionMode) return existing
+    if (existing?.session !== undefined) {
+      existing.cursor ??= existing.session.ref.resumeCursor
+      await existing.session.dispose()
+      existing.session = undefined
+    }
     const cursor = existing?.cursor
     const openRequest: ExternalAgentOpenRequest = {
       route,
@@ -242,6 +248,7 @@ export class ExternalAgentPrimaryConsumer {
     const session = await this.registry.openSession(openRequest)
     const slot = existing ?? { key, route }
     slot.session = session
+    slot.permissionMode = request.permissionMode
     if (cursor !== undefined) slot.cursor = cursor
     this.slots.set(key, slot)
     return slot
