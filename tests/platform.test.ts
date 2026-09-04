@@ -20,6 +20,7 @@ import {
   providerId,
   resumeCursor,
   sessionId,
+  toolId,
   turnId,
   withBoundedExternalAgentHost,
   type ExternalAgentEvent,
@@ -149,8 +150,9 @@ describe('external-agent platform', () => {
     expect(() => new BoundedEventLog({ maxEvents: 0 })).toThrow(/maxEvents/)
     expect(() => new BoundedEventLog({ maxTextBytes: -1 })).toThrow(/maxTextBytes/)
     expect(() => new BoundedEventLog({ maxPayloadBytes: 0 })).toThrow(/maxPayloadBytes/)
-    const event = boundExternalAgentEvent({ type: 'tool-activity', toolId: '工具'.repeat(20), name: 'x'.repeat(100), status: 'completed', input: '😀'.repeat(100) }, { maxTextBytes: 64, maxPayloadBytes: 160 })
+    const event = boundExternalAgentEvent({ type: 'tool-activity', toolId: toolId('tool-1'), name: 'x'.repeat(100), status: 'completed', input: '😀'.repeat(100) }, { maxTextBytes: 64, maxPayloadBytes: 160 })
     expect(new TextEncoder().encode(JSON.stringify(event)).byteLength).toBeLessThanOrEqual(160)
+    expect(event.type === 'tool-activity' && event.toolId).toBe('tool-1')
     const seen: string[] = []
     const bounded = withBoundedExternalAgentHost({ publish: (): void => undefined, requestPermission: async request => { seen.push(request.reason); return { kind: 'allow-once', optionId: request.options[0].optionId } }, requestUserInput: async () => ({ answers: [] }) }, { maxTextBytes: 8, maxPayloadBytes: 512 })
     await bounded.requestPermission({ ...fakePermissionRequest(), reason: 'r'.repeat(100) })
@@ -159,16 +161,27 @@ describe('external-agent platform', () => {
   })
 
   it('switches primary routes and folds pending/committed interaction events', async () => {
-    const first = new FakeExternalAgentProvider('one', [{ id: 'coder', supportedModes: modes }], { scripts: [{ permission: { request: fakePermissionRequest() }, result: { text: 'one' } }] })
+    const first = new FakeExternalAgentProvider('one', [{ id: 'coder', supportedModes: modes }], { scripts: [{ events: [{ type: 'assistant-delta', text: 'streamed' }], permission: { request: fakePermissionRequest() }, result: { text: 'one' } }] })
     const second = new FakeExternalAgentProvider('two', [{ id: 'coder', supportedModes: modes }], { scripts: [{ result: { text: 'two' } }] })
     const registry = new ExternalAgentProviderRegistry()
     registry.register(first); registry.register(second)
     const consumer = new ExternalAgentPrimaryConsumer(registry)
     const sessionEvents: string[] = []
-    const request = (provider: string, turn: string) => ({ session: sessionId('primary'), route: route(provider), turn: turnId(turn), prompt: 'go', permissionMode: 'approval-required' as const, signal: new AbortController().signal, host: { publish: (): void => undefined, requestPermission: async (req: ExternalAgentPermissionRequest) => ({ kind: 'allow-once' as const, optionId: req.options[0].optionId }), requestUserInput: async () => ({ answers: [] }) }, onSessionEvent: (event: ExternalAgentConsumerEvent) => { sessionEvents.push(event.type) } })
+    const request = (provider: string, turn: string) => ({ session: sessionId('primary'), route: route(provider), turn: turnId(turn), prompt: 'go', permissionMode: 'approval-required' as const, signal: new AbortController().signal, host: { publish: (event: ExternalAgentEvent) => { sessionEvents.push('host-' + event.type) }, requestPermission: async (req: ExternalAgentPermissionRequest) => ({ kind: 'allow-once' as const, optionId: req.options[0].optionId }), requestUserInput: async () => ({ answers: [] }) }, onSessionEvent: (event: ExternalAgentConsumerEvent) => { sessionEvents.push(event.type) } })
     expect((await consumer.runTurn(request('one', 't1'))).text).toBe('one')
     expect((await consumer.runTurn(request('two', 't2'))).text).toBe('two')
-    expect(sessionEvents).toEqual(expect.arrayContaining(['permission-pending', 'permission-committed', 'turn-finished']))
+    expect(sessionEvents).toEqual(expect.arrayContaining(['host-assistant-delta', 'activity', 'permission-pending', 'permission-committed', 'turn-finished']))
+    await consumer.dispose()
+  })
+
+  it('logs a terminal result when a primary provider turn throws', async () => {
+    const provider = new FakeExternalAgentProvider('failing', [{ id: 'coder', supportedModes: modes }], { scripts: [{ error: new Error('native failure') }] })
+    const registry = new ExternalAgentProviderRegistry()
+    registry.register(provider)
+    const consumer = new ExternalAgentPrimaryConsumer(registry)
+    const events: ExternalAgentConsumerEvent[] = []
+    await expect(consumer.runTurn({ session: sessionId('failed'), route: route('failing'), prompt: 'go', permissionMode: 'approval-required', signal: new AbortController().signal, host: host(), onSessionEvent: event => { events.push(event) } })).rejects.toThrow('native failure')
+    expect(events.at(-1)).toMatchObject({ type: 'turn-finished', result: { status: 'failed' } })
     await consumer.dispose()
   })
 

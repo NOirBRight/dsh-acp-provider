@@ -89,5 +89,5 @@ export function apply(ctx: unknown, config: Config): void {
   };
   live = createBridge(host as never, bridgeConfig);
   const mounted = live;
-  context.effect(() => () => { mounted.dispose(); live = undefined; }, 'dsh-bridge.dispose()');
+  context.effect(() => async () => { try { await mounted.dispose(); } finally { live = undefined; } }, 'dsh-bridge.dispose()');
 }

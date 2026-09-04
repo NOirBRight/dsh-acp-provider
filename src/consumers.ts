@@ -71,7 +71,10 @@ interface PrimarySlot {
 
 function createConsumerTurnHost(host: ExternalAgentTurnHostCallbacks, emit: (event: ExternalAgentConsumerEvent) => void | Promise<void>): ExternalAgentTurnHostCallbacks {
   return {
-    publish: event => Promise.resolve(emit({ type: 'activity', event })),
+    publish: async event => {
+      await host.publish(event)
+      await emit({ type: 'activity', event })
+    },
     requestPermission: async request => {
       await emit({ type: 'permission-pending', request })
       try {
@@ -185,6 +188,9 @@ export class ExternalAgentPrimaryConsumer {
       if (result.resumeCursor !== undefined) slot.cursor = result.resumeCursor
       await emit({ type: 'turn-finished', turn: effectiveRequest.turn, result })
       return result
+    } catch (error) {
+      await emit({ type: 'turn-finished', turn: effectiveRequest.turn, result: { status: 'failed', text: '', error: 'external-agent turn failed' } })
+      throw error
     } finally {
       request.signal.removeEventListener('abort', forwardAbort)
       if (this.active?.promise === promise) this.active = undefined

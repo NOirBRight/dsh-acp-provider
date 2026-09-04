@@ -34,7 +34,7 @@ export interface Bridge {
   project<T>(sessionId: BridgeSessionId, init: T, fold: (state: T, event: BridgeSessionEvent) => T): T
   requestApproval(request: BridgeApprovalRequest): Promise<BridgeApprovalOutcome>
   askUser(question: BridgeQuestion, options?: { signal?: AbortSignal }): Promise<string>
-  dispose(): void
+  dispose(): Promise<void>
 }
 
 /** Fail loud on a route the directory could not present honestly. */
@@ -55,6 +55,8 @@ class BridgeImpl implements Bridge {
   readonly routes: readonly BridgeRoute[];
   private readonly byId: ReadonlyMap<string, BridgeRoute>;
   private readonly disposers: Array<() => void> = [];
+  private readonly active = new Set<{ readonly controller: AbortController; readonly promise: Promise<unknown> }>();
+  private disposePromise: Promise<void> | undefined;
   private disposed = false;
 
   constructor(private readonly host: BridgeHost, private readonly config: BridgeConfig) {
@@ -89,17 +91,26 @@ class BridgeImpl implements Bridge {
     if (request.signal?.aborted === true) {
       return { handled: true, result: { stopReason: 'aborted', outputText: '' } };
     }
+    const controller = new AbortController();
+    const abort = (): void => controller.abort();
+    request.signal?.addEventListener('abort', abort, { once: true });
+    const promise = Promise.resolve().then(() => this.config.runner.run({ ...request, signal: controller.signal }));
+    const active = { controller, promise };
+    this.active.add(active);
     try {
-      return { handled: true, result: await this.config.runner.run(request) };
+      return { handled: true, result: await promise };
     } catch (error: unknown) {
       return {
         handled: true,
         result: {
-          stopReason: 'error',
+          stopReason: controller.signal.aborted ? 'aborted' : 'error',
           outputText: '',
-          diagnostic: error instanceof Error ? error.message : String(error),
+          ...(controller.signal.aborted ? {} : { diagnostic: error instanceof Error ? error.message : String(error) }),
         },
       };
+    } finally {
+      request.signal?.removeEventListener('abort', abort);
+      this.active.delete(active);
     }
   }
 
@@ -120,10 +131,19 @@ class BridgeImpl implements Bridge {
     return this.host.interaction.askUser(question, options);
   }
 
-  dispose(): void {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposePromise !== undefined) return this.disposePromise;
     this.disposed = true;
-    this.unwind();
+    this.disposePromise = this.disposeQuiescently();
+    return this.disposePromise;
+  }
+
+  private async disposeQuiescently(): Promise<void> {
+    let unwindError: unknown;
+    try { this.unwind(); } catch (error) { unwindError = error; }
+    for (const active of this.active) active.controller.abort();
+    await Promise.all([...this.active].map(active => active.promise.catch(() => undefined)));
+    if (unwindError !== undefined) throw unwindError;
   }
 
   private unwind(): void {

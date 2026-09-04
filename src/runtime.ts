@@ -1,5 +1,6 @@
 import {
   DuplicateProviderError,
+  FullAccessConfirmationError,
   RouteResolutionError,
   SessionDisposedError,
   UnsupportedModeError,
@@ -22,6 +23,15 @@ import {
   type ExternalAgentTurnResult,
   type SessionModelRoute,
 } from './contracts.js'
+
+const authorizedFullAccessRequests = new WeakSet<ExternalAgentOpenRequest>()
+
+/** Consume proof that a full-access request passed the registry's confirmation and audit step.
+ * @param request - provider open request received from the registry.
+ */
+export function consumeExternalAgentOpenAuthorization(request: ExternalAgentOpenRequest): void {
+  if (request.permissionMode === 'full-access' && !authorizedFullAccessRequests.delete(request)) throw new FullAccessConfirmationError('full-access requests must be authorized by the provider registry')
+}
 
 /** Resolved external route with exact provider and model metadata. */
 export interface ResolvedExternalAgentRoute {
@@ -153,6 +163,7 @@ export class ExternalAgentProviderRegistry {
     const route = request.route
     if (route.kind !== 'external-agent') throw new RouteResolutionError('route kind is not external-agent: ' + route.kind)
     await authorizeExternalAgentOpen(request, this.options.auditFullAccess)
+    if (request.permissionMode === 'full-access') authorizedFullAccessRequests.add(request)
     const resolved = await resolveExternalAgentRoute(this, route, request.signal)
     if (!resolved.model.supportedModes.includes(request.permissionMode)) throw new UnsupportedModeError('mode ' + request.permissionMode + ' is not supported by ' + route.provider + '/' + route.model)
     const raw = await resolved.provider.openSession(request)

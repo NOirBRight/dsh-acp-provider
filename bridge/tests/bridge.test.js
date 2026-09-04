@@ -61,13 +61,13 @@ const runner = {
 };
 
 describe('directory contribution with explicit route kind', () => {
-  it('registers every route and lists them back with kind intact', () => {
+  it('registers every route and lists them back with kind intact', async () => {
     const host = fakeHost();
     const bridge = createBridge(host, { routes: ROUTES, runner });
     assert.deepEqual(host.directory.list(), ROUTES);
     assert.equal(host.directory.list()[0].kind, 'external-agent');
     assert.equal(host.directory.list()[1].kind, 'llm');
-    bridge.dispose();
+    await bridge.dispose();
     assert.deepEqual(host.directory.list(), []);
   });
 
@@ -115,7 +115,7 @@ describe('primary turn-driver dispatch', () => {
       await bridge.drive({ sessionId: 's1', routeId: 'nope', model: 'm', prompt: 'hi' }),
       { handled: false },
     );
-    bridge.dispose();
+    await bridge.dispose();
   });
 
   it('maps an aborted signal to an aborted turn without calling the runner', async () => {
@@ -132,7 +132,7 @@ describe('primary turn-driver dispatch', () => {
       { handled: true, result: { stopReason: 'aborted', outputText: '' } },
     );
     assert.equal(called, 0);
-    bridge.dispose();
+    await bridge.dispose();
   });
 
   it('maps a runner throw to an error turn', async () => {
@@ -145,19 +145,19 @@ describe('primary turn-driver dispatch', () => {
       await bridge.drive({ sessionId: 's1', routeId: 'codex', model: 'gpt-5', prompt: 'hi' }),
       { handled: true, result: { stopReason: 'error', outputText: '', diagnostic: 'boom' } },
     );
-    bridge.dispose();
+    await bridge.dispose();
   });
 });
 
 describe('session event projection', () => {
-  it('folds only stored events from the requested session', () => {
+  it('folds only stored events from the requested session', async () => {
     const host = fakeHost();
     const bridge = createBridge(host, { routes: ROUTES, runner });
     host.emit('s1', { type: 'user/message', seq: 0, data: {} });
     host.emit('s1', { type: 'assistant/message', seq: 1, data: {} });
     host.emit('s2', { type: 'user/message', seq: 0, data: {} });
     assert.equal(bridge.project('s1', 0, (n) => n + 1), 2);
-    bridge.dispose();
+    await bridge.dispose();
   });
 });
 
@@ -169,16 +169,34 @@ describe('approval and question delegation', () => {
     assert.deepEqual(host.lastApproval, { sessionId: 's1', toolName: 'run', reason: 'why' });
     assert.equal(await bridge.askUser({ id: 'q1', question: 'proceed?' }), 'answer');
     assert.equal(host.lastQuestion.question.id, 'q1');
-    bridge.dispose();
+    await bridge.dispose();
   });
 });
 
 describe('disposal', () => {
+  it('aborts and awaits an in-flight runner', async () => {
+    const host = fakeHost();
+    let release;
+    let aborted = false;
+    const runner = { run: request => new Promise(resolve => { request.signal.addEventListener('abort', () => { aborted = true; }); release = resolve; }) };
+    const bridge = createBridge(host, { routes: ROUTES, runner });
+    const turn = bridge.drive({ sessionId: 's', routeId: 'codex', model: 'gpt-5', prompt: 'wait' });
+    await Promise.resolve();
+    let disposed = false;
+    const disposal = bridge.dispose().then(() => { disposed = true; });
+    await Promise.resolve();
+    assert.equal(aborted, true);
+    assert.equal(disposed, false);
+    release({ stopReason: 'aborted', outputText: '' });
+    await disposal;
+    assert.deepEqual(await turn, { handled: true, result: { stopReason: 'aborted', outputText: '' } });
+  });
+
   it('unregisters routes and the driver; use after dispose throws', async () => {
     const host = fakeHost();
     const bridge = createBridge(host, { routes: ROUTES, runner });
-    bridge.dispose();
-    bridge.dispose();
+    await bridge.dispose();
+    await bridge.dispose();
     assert.deepEqual(host.directory.list(), []);
     assert.equal(host.primary, undefined);
     await assert.rejects(bridge.drive({ sessionId: 's', routeId: 'codex', model: 'm', prompt: 'p' }), /disposed/);

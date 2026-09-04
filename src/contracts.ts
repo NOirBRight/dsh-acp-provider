@@ -20,6 +20,8 @@ export type ExternalAgentSessionId = Branded<string, 'ExternalAgentSessionId'>
 export type ExternalAgentTurnId = Branded<string, 'ExternalAgentTurnId'>
 /** External-agent subagent job identifier. */
 export type ExternalAgentJobId = Branded<string, 'ExternalAgentJobId'>
+/** Provider tool-call identifier. */
+export type ExternalAgentToolId = Branded<string, 'ExternalAgentToolId'>
 /** Native permission option identifier. */
 export type ExternalAgentOptionId = Branded<string, 'ExternalAgentOptionId'>
 
@@ -37,6 +39,11 @@ export function sessionId(value: string): ExternalAgentSessionId { return brand<
 export function turnId(value: string): ExternalAgentTurnId { return brand<string, 'ExternalAgentTurnId'>(value, 'turn id') }
 /** Brand a subagent job identifier at a request boundary. */
 export function jobId(value: string): ExternalAgentJobId { return brand<string, 'ExternalAgentJobId'>(value, 'job id') }
+/** Brand a provider tool-call identifier at a wire boundary.
+ * @param value - non-empty native tool identifier.
+ * @returns the branded identifier.
+ */
+export function toolId(value: string): ExternalAgentToolId { return brand<string, 'ExternalAgentToolId'>(value, 'tool id') }
 /** Brand a native option identifier at a wire boundary. */
 export function optionId(value: string): ExternalAgentOptionId { return brand<string, 'ExternalAgentOptionId'>(value, 'option id') }
 
@@ -188,7 +195,7 @@ export interface ExternalAgentUserInputAnswers { readonly answers: readonly stri
 export type ExternalAgentEvent =
   | { readonly type: 'assistant-delta'; readonly text: string }
   | { readonly type: 'thought-delta'; readonly text: string }
-  | { readonly type: 'tool-activity'; readonly toolId: string; readonly name: string; readonly status: 'pending' | 'running' | 'completed' | 'failed'; readonly input?: string; readonly output?: string; readonly error?: string; readonly locations?: readonly string[] }
+  | { readonly type: 'tool-activity'; readonly toolId: ExternalAgentToolId; readonly name: string; readonly status: 'pending' | 'running' | 'completed' | 'failed'; readonly input?: string; readonly output?: string; readonly error?: string; readonly locations?: readonly string[] }
   | { readonly type: 'plan-update'; readonly summary: string; readonly steps: readonly string[] }
   | { readonly type: 'usage'; readonly inputTokens?: number; readonly outputTokens?: number }
   | { readonly type: 'notice'; readonly level: 'info' | 'warning' | 'error'; readonly message: string }

@@ -10,8 +10,14 @@ export interface ExternalAgentEventBounds {
   readonly maxTextBytes: number
   readonly maxPayloadBytes: number
 }
+/** Return the UTF-8 byte length of a string. */
 function utf8Length(value: string): number { return new TextEncoder().encode(value).byteLength }
-function truncateUtf8(value: string, maxBytes: number): string {
+/** Truncate text without splitting a Unicode code point.
+ * @param value - text to truncate.
+ * @param maxBytes - maximum UTF-8 byte length.
+ * @returns the longest fitting prefix.
+ */
+export function truncateUtf8(value: string, maxBytes: number): string {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new RangeError('maxTextBytes must be a non-negative safe integer')
   if (utf8Length(value) <= maxBytes) return value
   let result = ''
@@ -24,70 +30,40 @@ function truncateUtf8(value: string, maxBytes: number): string {
   }
   return result
 }
+
 function payloadBytes(value: unknown): number { return utf8Length(JSON.stringify(value)) }
-function emptyEvent(event: ExternalAgentEvent): ExternalAgentEvent {
+type EventTextSlot = { readonly value: string; readonly apply: (event: ExternalAgentEvent, value: string) => ExternalAgentEvent }
+function assertNever(value: never): never { throw new TypeError('unknown external-agent event: ' + JSON.stringify(value)) }
+function eventTextSlots(event: ExternalAgentEvent): readonly EventTextSlot[] {
   switch (event.type) {
-    case 'assistant-delta': return { type: event.type, text: '' }
-    case 'thought-delta': return { type: event.type, text: '' }
-    case 'tool-activity': return { type: event.type, toolId: '', name: '', status: event.status }
-    case 'plan-update': return { type: event.type, summary: '', steps: [] }
-    case 'usage': return event
-    case 'notice': return { type: event.type, level: event.level, message: '' }
-    case 'session': return { type: event.type, status: event.status }
-    case 'turn-result': return { type: event.type, status: event.status }
+    case 'assistant-delta': return [{ value: event.text, apply: (candidate, value) => ({ ...candidate, text: value } as ExternalAgentEvent) }]
+    case 'thought-delta': return [{ value: event.text, apply: (candidate, value) => ({ ...candidate, text: value } as ExternalAgentEvent) }]
+    case 'tool-activity': return [
+      { value: event.name, apply: (candidate, value) => ({ ...candidate, name: value } as ExternalAgentEvent) },
+      ...(['input', 'output', 'error'] as const).flatMap(key => event[key] === undefined ? [] : [{ value: event[key], apply: (candidate: ExternalAgentEvent, value: string) => ({ ...candidate, [key]: value } as ExternalAgentEvent) }]),
+      ...(event.locations ?? []).map((location, index) => ({ value: location, apply: (candidate: ExternalAgentEvent, value: string) => candidate.type === 'tool-activity' ? { ...candidate, locations: candidate.locations?.map((item, itemIndex) => itemIndex === index ? value : item) } : candidate })),
+    ]
+    case 'plan-update': return [
+      { value: event.summary, apply: (candidate, value) => ({ ...candidate, summary: value } as ExternalAgentEvent) },
+      ...event.steps.map((step, index) => ({ value: step, apply: (candidate: ExternalAgentEvent, value: string) => candidate.type === 'plan-update' ? { ...candidate, steps: candidate.steps.map((item, itemIndex) => itemIndex === index ? value : item) } : candidate })),
+    ]
+    case 'notice': return [{ value: event.message, apply: (candidate, value) => ({ ...candidate, message: value } as ExternalAgentEvent) }]
+    case 'session': return event.cursor === undefined ? [] : [{ value: event.cursor, apply: (candidate, value) => ({ ...candidate, cursor: value } as ExternalAgentEvent) }]
+    case 'turn-result': return event.content === undefined ? [] : [{ value: event.content, apply: (candidate, value) => ({ ...candidate, content: value } as ExternalAgentEvent) }]
+    case 'usage': return []
+    default: return assertNever(event)
   }
 }
-function boundedInitialEvent(event: ExternalAgentEvent, maxTextBytes: number): ExternalAgentEvent {
-  switch (event.type) {
-    case 'assistant-delta': return { ...event, text: truncateUtf8(event.text, maxTextBytes) }
-    case 'thought-delta': return { ...event, text: truncateUtf8(event.text, maxTextBytes) }
-    case 'tool-activity': return {
-      ...event,
-      toolId: truncateUtf8(event.toolId, maxTextBytes),
-      name: truncateUtf8(event.name, maxTextBytes),
-      ...(event.input === undefined ? {} : { input: truncateUtf8(event.input, maxTextBytes) }),
-      ...(event.output === undefined ? {} : { output: truncateUtf8(event.output, maxTextBytes) }),
-      ...(event.error === undefined ? {} : { error: truncateUtf8(event.error, maxTextBytes) }),
-      ...(event.locations === undefined ? {} : { locations: event.locations.map(location => truncateUtf8(location, maxTextBytes)) }),
-    }
-    case 'plan-update': return { ...event, summary: truncateUtf8(event.summary, maxTextBytes), steps: event.steps.map(step => truncateUtf8(step, maxTextBytes)) }
-    case 'usage': return event
-    case 'notice': return { ...event, message: truncateUtf8(event.message, maxTextBytes) }
-    case 'session': return event.cursor === undefined ? event : { ...event, cursor: truncateUtf8(event.cursor, maxTextBytes) }
-    case 'turn-result': return event.content === undefined ? event : { ...event, content: truncateUtf8(event.content, maxTextBytes) }
-  }
-}
+
 /** Bound every variable in one event and guarantee its complete JSON is within the payload cap. */
 export function boundExternalAgentEvent(event: ExternalAgentEvent, bounds: ExternalAgentEventBounds): ExternalAgentEvent {
   if (!Number.isSafeInteger(bounds.maxTextBytes) || bounds.maxTextBytes < 0) throw new RangeError('maxTextBytes must be a non-negative safe integer')
   if (!Number.isSafeInteger(bounds.maxPayloadBytes) || bounds.maxPayloadBytes < 1) throw new RangeError('maxPayloadBytes must be a positive safe integer')
-  const initial = boundedInitialEvent(event, bounds.maxTextBytes)
-  if (payloadBytes(initial) <= bounds.maxPayloadBytes) return initial
-  let current = emptyEvent(initial)
-  if (payloadBytes(current) > bounds.maxPayloadBytes) throw new RangeError('external-agent event exceeds maxPayloadBytes: ' + event.type)
-  const slots: Array<{ readonly value: string; readonly optional?: boolean; readonly apply: (event: ExternalAgentEvent, value: string) => ExternalAgentEvent }> = []
-  switch (initial.type) {
-    case 'assistant-delta': slots.push({ value: initial.text, apply: (valueEvent, value) => ({ ...valueEvent, text: value } as ExternalAgentEvent) }); break
-    case 'thought-delta': slots.push({ value: initial.text, apply: (valueEvent, value) => ({ ...valueEvent, text: value } as ExternalAgentEvent) }); break
-    case 'tool-activity':
-      slots.push({ value: initial.toolId, apply: (valueEvent, value) => ({ ...valueEvent, toolId: value } as ExternalAgentEvent) }, { value: initial.name, apply: (valueEvent, value) => ({ ...valueEvent, name: value } as ExternalAgentEvent) })
-      for (const location of initial.locations ?? []) slots.push({ value: location, optional: true, apply: (valueEvent, value) => ({ ...valueEvent, locations: [...(valueEvent.type === 'tool-activity' ? valueEvent.locations ?? [] : []), value] } as ExternalAgentEvent) })
-      for (const key of ['input', 'output', 'error'] as const) {
-        const value = initial[key]
-        if (value !== undefined) slots.push({ value, optional: true, apply: (valueEvent, next) => ({ ...valueEvent, [key]: next } as ExternalAgentEvent) })
-      }
-      break
-    case 'plan-update':
-      slots.push({ value: initial.summary, apply: (valueEvent, value) => ({ ...valueEvent, summary: value } as ExternalAgentEvent) })
-      for (const step of initial.steps) slots.push({ value: step, optional: true, apply: (valueEvent, value) => ({ ...valueEvent, steps: [...(valueEvent.type === 'plan-update' ? valueEvent.steps : []), value] } as ExternalAgentEvent) })
-      break
-    case 'notice': slots.push({ value: initial.message, apply: (valueEvent, value) => ({ ...valueEvent, message: value } as ExternalAgentEvent) }); break
-    case 'session': if (initial.cursor !== undefined) slots.push({ value: initial.cursor, optional: true, apply: (valueEvent, value) => ({ ...valueEvent, cursor: value } as ExternalAgentEvent) }); break
-    case 'turn-result': if (initial.content !== undefined) slots.push({ value: initial.content, optional: true, apply: (valueEvent, value) => ({ ...valueEvent, content: value } as ExternalAgentEvent) }); break
-    case 'usage': break
-  }
+  const slots = eventTextSlots(event)
+  let current = slots.reduce((candidate, slot) => slot.apply(candidate, truncateUtf8(slot.value, bounds.maxTextBytes)), event)
+  if (payloadBytes(current) <= bounds.maxPayloadBytes) return current
   for (const slot of slots) {
-    const points = Array.from(slot.value)
+    const points = Array.from(truncateUtf8(slot.value, bounds.maxTextBytes))
     let low = 0
     let high = points.length
     let best = ''
@@ -96,7 +72,7 @@ export function boundExternalAgentEvent(event: ExternalAgentEvent, bounds: Exter
       const candidate = points.slice(0, middle).join('')
       if (payloadBytes(slot.apply(current, candidate)) <= bounds.maxPayloadBytes) { best = candidate; low = middle + 1 } else high = middle - 1
     }
-    if (best !== '' || slot.optional !== true) current = slot.apply(current, best)
+    current = slot.apply(current, best)
   }
   if (payloadBytes(current) > bounds.maxPayloadBytes) throw new RangeError('external-agent event exceeds maxPayloadBytes: ' + event.type)
   return current
