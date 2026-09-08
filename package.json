@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-acp-provider",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Provider-neutral External Agent platform for DSH providers and consumers.",
   "license": "MIT",
@@ -8,6 +8,7 @@
   "publishConfig": { "access": "public" },
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./activity-store": { "types": "./dist/activity-store.d.ts", "default": "./dist/activity-store.js" },
     "./consumers": { "types": "./dist/consumers.d.ts", "default": "./dist/consumers.js" },
     "./fake": { "types": "./dist/fake.d.ts", "default": "./dist/fake.js" },
     "./filesystem": { "types": "./dist/filesystem.d.ts", "default": "./dist/filesystem.js" },

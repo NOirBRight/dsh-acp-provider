@@ -41,7 +41,7 @@ function eventTextSlots(event: ExternalAgentEvent): readonly EventTextSlot[] {
     case 'tool-activity': return [
       { value: event.name, apply: (candidate, value) => ({ ...candidate, name: value } as ExternalAgentEvent) },
       ...(['input', 'output', 'error'] as const).flatMap(key => event[key] === undefined ? [] : [{ value: event[key], apply: (candidate: ExternalAgentEvent, value: string) => ({ ...candidate, [key]: value } as ExternalAgentEvent) }]),
-      ...(event.locations ?? []).map((location, index) => ({ value: location.path, apply: (candidate: ExternalAgentEvent, value: string) => candidate.type === 'tool-activity' ? { ...candidate, locations: candidate.locations?.map((item, itemIndex) => itemIndex === index ? { ...item, path: value } : item) } : candidate })),
+      ...(event.locations ?? []).map((location, index) => ({ value: location.path, apply: (candidate: ExternalAgentEvent, value: string) => candidate.type === 'tool-activity' && candidate.locations !== undefined ? { ...candidate, locations: candidate.locations.map((item, itemIndex) => itemIndex === index ? { ...item, path: value } : item) } : candidate })),
     ]
     case 'plan-update': return [
       { value: event.summary, apply: (candidate, value) => ({ ...candidate, summary: value } as ExternalAgentEvent) },

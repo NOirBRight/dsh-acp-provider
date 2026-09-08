@@ -148,7 +148,9 @@ export class ExternalAgentSettingsPageModel {
         try { editor = this.editors.require(directory.provider, directory.instanceId).snapshot() } catch (error) {
           if (!(error instanceof ExternalAgentSettingsEditorUnavailableError)) throw error
         }
-        return { directory, ...(settings.get(id) === undefined ? {} : { settings: settings.get(id) }), ...(credentials.get(id) === undefined ? {} : { credentials: credentials.get(id) }), ...(editor === undefined ? {} : { editor }) }
+        const saved = settings.get(id)
+        const credential = credentials.get(id)
+        return { directory, ...(saved === undefined ? {} : { settings: saved }), ...(credential === undefined ? {} : { credentials: credential }), ...(editor === undefined ? {} : { editor }) }
       }),
     }
   }

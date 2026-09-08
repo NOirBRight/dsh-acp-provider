@@ -208,13 +208,20 @@ export interface ExternalAgentUserInputAnswers { readonly answers: readonly stri
 /** File location associated with native tool activity. */
 export interface ExternalAgentToolLocation { readonly path: string; readonly line?: number }
 
+/** Authoritative native trajectory relationships; absent relationships are never inferred from tool names. */
+export interface ExternalAgentOwnership {
+  readonly trajectoryId: string
+  readonly parentTrajectoryId?: string
+  readonly depth?: number
+}
+
 /** Normalized activity visible to DSH; tool activity is never re-executed by DSH. */
 export type ExternalAgentEvent =
-  | { readonly type: 'assistant-delta'; readonly text: string }
-  | { readonly type: 'thought-delta'; readonly text: string }
-  | { readonly type: 'tool-activity'; readonly toolId: ExternalAgentToolId; readonly name: string; readonly status: 'pending' | 'running' | 'completed' | 'failed'; readonly input?: string; readonly output?: string; readonly error?: string; readonly locations?: readonly ExternalAgentToolLocation[] }
+  | { readonly type: 'assistant-delta'; readonly text: string; readonly ownership?: ExternalAgentOwnership }
+  | { readonly type: 'thought-delta'; readonly text: string; readonly ownership?: ExternalAgentOwnership }
+  | { readonly type: 'tool-activity'; readonly toolId: ExternalAgentToolId; readonly name: string; readonly nameMissing?: boolean; readonly ownership?: ExternalAgentOwnership; readonly status: 'pending' | 'running' | 'completed' | 'failed'; readonly input?: string; readonly output?: string; readonly error?: string; readonly locations?: readonly ExternalAgentToolLocation[] }
   | { readonly type: 'plan-update'; readonly summary: string; readonly steps: readonly string[] }
-  | { readonly type: 'usage'; readonly inputTokens?: number; readonly outputTokens?: number }
+  | { readonly type: 'usage'; readonly inputTokens?: number; readonly outputTokens?: number; readonly totalTokens?: number; readonly reasoningTokens?: number; readonly cacheReadTokens?: number; readonly cacheWriteTokens?: number }
   | { readonly type: 'notice'; readonly level: 'info' | 'warning' | 'error'; readonly message: string }
   | { readonly type: 'session'; readonly status: 'created' | 'resumed' | 'closed'; readonly cursor?: string }
   | { readonly type: 'turn-result'; readonly status: 'completed' | 'cancelled' | 'failed'; readonly content?: string }
@@ -271,6 +278,8 @@ export interface ExternalAgentOpenRequest {
 export interface ExternalAgentTurnRequest {
   readonly turn: ExternalAgentTurnId
   readonly prompt: string
+  /** Exact native model selected for this turn; omitted only when retaining the open model. */
+  readonly model?: ExternalAgentModelId
   readonly attachments?: readonly ExternalAgentAttachment[]
   readonly permissionMode: ExternalAgentPermissionMode
   readonly signal: AbortSignal

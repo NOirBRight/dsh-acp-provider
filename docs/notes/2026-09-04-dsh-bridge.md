@@ -1,5 +1,7 @@
 # Agent Note: DSH composition bridge
 
+Status: retired experiment. The supported composition uses the DSH LLM adapter with ExternalAgentTurnRunner; this probe does not describe the current host integration. See the package README. The experimental code is retained as a standalone probe, not a required provider entry point.
+
 ## Decision
 
 Keep DSH composition in bridge/ as an out-of-tree adapter contract. The bridge probes the installed host before mounting and throws when required route, turn-driver, session-event, or interaction capabilities are absent.

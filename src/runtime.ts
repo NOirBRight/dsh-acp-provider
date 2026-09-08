@@ -164,11 +164,18 @@ export class ExternalAgentProviderRegistry {
   }
   /** List models from one exact provider. */
   listModels(id: ExternalAgentProviderId, signal?: AbortSignal): Promise<readonly ExternalAgentModel[]> { return this.require(id).listModels(signal) }
+  /** Authorize one open request, auditing full access before provider startup.
+   * @param request - provider open request to verify.
+   * @returns a promise that resolves when the request is authorized.
+   */
+  authorize(request: ExternalAgentOpenRequest): Promise<void> {
+    return authorizeExternalAgentOpen(request, this.options.auditFullAccess)
+  }
   /** Resolve and open one exact provider session, registering it for disposal. */
   async openSession(request: ExternalAgentOpenRequest): Promise<ExternalAgentSession> {
     const route = request.route
     if (route.kind !== 'external-agent') throw new RouteResolutionError('route kind is not external-agent: ' + route.kind)
-    await authorizeExternalAgentOpen(request, this.options.auditFullAccess)
+    await this.authorize(request)
     const resolved = await resolveExternalAgentRoute(this, route, request.signal)
     if (!resolved.model.supportedModes.includes(request.permissionMode)) throw new UnsupportedModeError('mode ' + request.permissionMode + ' is not supported by ' + route.provider + '/' + route.model)
     if (request.permissionMode === 'full-access') authorizedFullAccessRequests.add(request)
