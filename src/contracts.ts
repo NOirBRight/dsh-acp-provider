@@ -202,8 +202,12 @@ export interface ExternalAgentAttachment {
   readonly mimeType?: string
   readonly data?: string
 }
-/** Answers to one native question. */
-export interface ExternalAgentUserInputAnswers { readonly answers: readonly string[] }
+/** Answers to one native question. `answers` stays flattened selected labels plus custom text for existing consumers. */
+export interface ExternalAgentUserInputAnswers {
+  readonly answers: readonly string[]
+  /** Host Other/free-text value. Provenance is typed custom, not a selected option, even when the text collides with an option label or native option id. */
+  readonly custom?: string
+}
 
 /** File location associated with native tool activity. */
 export interface ExternalAgentToolLocation { readonly path: string; readonly line?: number }

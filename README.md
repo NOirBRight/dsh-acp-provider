@@ -37,6 +37,8 @@ await runner.dispose()
 await unregister()
 ```
 
+Question callbacks keep every response string in `ExternalAgentUserInputAnswers.answers`. An optional `custom` identifies the free-text response already included in that array, so adapters do not reinterpret text matching an option label or id as a selection.
+
 ## Runtime rules
 
 - Provider and model resolution is exact; unknown routes and unsupported permission modes fail explicitly.
