@@ -75,7 +75,6 @@ export class ExternalAgentActivityStore<TEvent extends ExternalAgentActivityEven
     const path = this.fileFor(sessionId)
     mkdirSync(this.root, { recursive: true, mode: 0o700 })
     chmodSync(this.root, 0o700)
-    // ponytail: O(n) re-read per append to assign seq; track next seq in memory if append throughput matters
     const next = this.read(sessionId).records.length + 1
     const time = new Date().toISOString()
     const out = Buffer.from(events

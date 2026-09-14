@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, sy
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { latestNativeSessionBinding } from '../src/contracts.js'
 import { ExternalAgentActivityStore, type ExternalAgentActivityRecord } from '../src/activity-store.js'
 
 const SCHEMA_VERSION = 7
@@ -123,5 +124,45 @@ describe('ExternalAgentActivityStore', () => {
     const root = tempRoot()
     expect(() => store(root).append('', [ready])).toThrow(/session id/)
     expect(() => store(root).read('')).toThrow(/session id/)
+  })
+})
+
+describe('latestNativeSessionBinding', () => {
+  const ready = 'vendor/session-ready'
+  it('returns the latest ready ref and a legacy fallback without a ref', () => {
+    const records = [
+      { type: 'other', data: {} },
+      { type: ready, data: { provider: 'vendor' } },
+      { type: ready, data: { provider: 'vendor', ref: { provider: 'vendor', session: 'dsh', nativeSession: 'n1' } } },
+    ]
+    expect(latestNativeSessionBinding(records, 'dsh', ready, 'vendor')).toEqual({
+      provider: 'vendor', session: 'dsh', nativeSession: 'n1',
+    })
+    expect(latestNativeSessionBinding(records.slice(0, 2), 'dsh', ready, 'vendor')).toEqual({
+      provider: 'vendor', session: 'dsh',
+    })
+    expect(latestNativeSessionBinding(records, 'dsh', 'missing', 'vendor')).toBeUndefined()
+  })
+
+  it('rejects a ready ref that belongs to another session', () => {
+    const records = [{ type: ready, data: { ref: { provider: 'vendor', session: 'dsh' } } }]
+    expect(() => latestNativeSessionBinding(records, 'other', ready, 'vendor')).toThrow('another DSH session')
+    expect(() => latestNativeSessionBinding([{ type: ready, data: { ref: 'dsh' } }], 'dsh', ready, 'vendor')).toThrow('another DSH session')
+  })
+
+  it('brands a resume cursor from a decoder-shaped ref', () => {
+    const records = [{ type: ready, data: { ref: { provider: 'vendor', session: 'dsh', resumeCursor: { provider: 'vendor', value: 'cursor-1' } } } }]
+    expect(latestNativeSessionBinding(records, 'dsh', ready, 'vendor')).toEqual({
+      provider: 'vendor', session: 'dsh', resumeCursor: { provider: 'vendor', value: 'cursor-1' },
+    })
+  })
+
+  it('rejects a binding or cursor owned by another provider', () => {
+    expect(() => latestNativeSessionBinding([
+      { type: ready, data: { ref: { provider: 'other', session: 'dsh' } } },
+    ], 'dsh', ready, 'vendor')).toThrow('another provider')
+    expect(() => latestNativeSessionBinding([
+      { type: ready, data: { ref: { provider: 'vendor', session: 'dsh', resumeCursor: { provider: 'other', value: 'cursor-1' } } } },
+    ], 'dsh', ready, 'vendor')).toThrow('another provider')
   })
 })

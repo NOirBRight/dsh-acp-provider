@@ -257,6 +257,56 @@ export interface ExternalAgentSessionRef {
   readonly resumeCursor?: ExternalAgentResumeCursor
 }
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+/** Latest native session-ready record in one sidecar history.
+ * Callers pass decoder-validated records; schema errors stay with the vendor decoder.
+ * A ready record without `ref` is a legacy binding with no resume cursor.
+ * @param records - Validated history records in seq order.
+ * @param boundSession - DSH conversation that must own the binding.
+ * @param readyType - Vendor session-ready event type.
+ * @param fallbackProvider - Provider id used when a legacy ready record has no ref.
+ * @returns The branded native reference, or undefined when no ready record exists.
+ */
+export function latestNativeSessionBinding(
+  records: readonly { readonly type: string; readonly data: unknown }[],
+  boundSession: string,
+  readyType: string,
+  fallbackProvider: string,
+): ExternalAgentSessionRef | undefined {
+  const expectedProvider = providerId(fallbackProvider)
+  for (let index = records.length - 1; index >= 0; index--) {
+    const record = records[index]
+    if (record?.type !== readyType) continue
+    const data = recordValue(record.data)
+    const rawRef = data === undefined || !('ref' in data) ? undefined : data.ref
+    if (rawRef === undefined) return { provider: expectedProvider, session: sessionId(boundSession) }
+    const bound = recordValue(rawRef)
+    if (bound === undefined || bound.session !== boundSession) throw new Error('native binding belongs to another DSH session')
+    const boundProvider = providerId(typeof bound.provider === 'string' ? bound.provider : '')
+    if (boundProvider !== expectedProvider) throw new Error('native binding belongs to another provider')
+    const native = typeof bound.nativeSession === 'string' ? bound.nativeSession : undefined
+    const cursor = recordValue(bound.resumeCursor)
+    const cursorProvider = cursor?.provider
+    const cursorValue = cursor?.value
+    if (cursor !== undefined && (typeof cursorProvider !== 'string' || typeof cursorValue !== 'string')) {
+      throw new Error('native binding has an invalid resume cursor')
+    }
+    if (typeof cursorProvider === 'string' && cursorProvider !== boundProvider) {
+      throw new Error('native binding resume cursor belongs to another provider')
+    }
+    return {
+      provider: boundProvider,
+      session: sessionId(boundSession),
+      ...(native === undefined ? {} : { nativeSession: sessionId(native) }),
+      ...(typeof cursorProvider === 'string' && typeof cursorValue === 'string' ? { resumeCursor: resumeCursor(cursorProvider, cursorValue) } : {}),
+    }
+  }
+  return undefined
+}
+
 /** Host filesystem capability supplied only when a native session opts in. */
 export interface ExternalAgentFilesystem {
   readonly workspaceRoots: readonly string[]
