@@ -1,3 +1,7 @@
+## v0.1.3
+
+Resolve latest native session binding from sidecar history.
+
 # Changelog
 
 ## Unreleased
