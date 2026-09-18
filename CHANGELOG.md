@@ -1,10 +1,10 @@
-## v0.1.3
-
-Resolve latest native session binding from sidecar history.
-
 # Changelog
 
-## Unreleased
+## [0.1.4] - 2026-09-18
+
+- Cache per-session activity sequence allocation after one validation read, so appends cost O(batch) instead of O(history), and add bounded `readAfter(sessionId, afterSeq, limit)` cursor pages with fixed record and byte limits.
+
+## [0.1.3]
 
 - Move `latestNativeSessionBinding` onto the browser-safe contracts export and return branded `ExternalAgentSessionRef`.
 
