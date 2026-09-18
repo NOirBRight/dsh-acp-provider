@@ -14,9 +14,12 @@
  * O(batch) instead of O(history). Each append still compares the opened file
  * against that cache by inode, size, and mtime, so a change made outside this
  * store (tampering, a torn write, another writer) is revalidated from disk and
- * still fails closed instead of being appended past. Appends are synchronous
- * and state is keyed per session, so one session's writes are serialized by
- * construction and different sessions never share a lock or a history scan.
+ * still fails closed instead of being appended past. The residual blind spot is
+ * a same-size in-place edit that also preserves the recorded mtime, which is
+ * easier to hit on filesystems with coarse timestamps and costs O(history)
+ * hashing to close. Appends are synchronous and state is keyed per session, so
+ * one session's writes are serialized by construction and different sessions
+ * never share a lock or a history scan.
  */
 import { createHash } from 'node:crypto'
 import { chmodSync, closeSync, constants, fchmodSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeSync, type Stats } from 'node:fs'
@@ -107,7 +110,9 @@ export class ExternalAgentActivityStore<TEvent extends ExternalAgentActivityEven
    * sequence comes from the per-session cursor, initialized by one validation
    * read on first use, so a batch costs O(batch) after that. Any failure drops
    * the cached cursor, so the next append revalidates the history from disk
-   * before writing and a torn or corrupt file still fails closed.
+   * before writing and a torn or corrupt file still fails closed. A history
+   * root removed after the one-time setup is recreated once and the append
+   * goes through, so the hoisted root setup cannot wedge the store.
    * @param sessionId - Required session id; hashed into the filename so it can never escape the root.
    * @param events - Durable typed events.
    * @returns Nothing; throws fail-closed on a corrupt existing file without overwriting it.
@@ -116,6 +121,17 @@ export class ExternalAgentActivityStore<TEvent extends ExternalAgentActivityEven
     requireSessionId(sessionId)
     if (events.length === 0) return
     this.ensureRoot()
+    try {
+      this.appendBatch(sessionId, events)
+    } catch (error) {
+      if (!isFileNotFound(error)) throw error
+      this.rootReady = false
+      this.ensureRoot()
+      this.appendBatch(sessionId, events)
+    }
+  }
+
+  private appendBatch(sessionId: string, events: readonly TEvent[]): void {
     const fd = openHistory(this.fileFor(sessionId), constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW, 0o600)
     try {
       fchmodSync(fd, 0o600)
@@ -164,9 +180,13 @@ export class ExternalAgentActivityStore<TEvent extends ExternalAgentActivityEven
 
   /** Read at most one bounded page of records strictly after an exclusive cursor.
    * Skips the already-seen prefix without decoding it, so only the returned
-   * records are parsed. The page always carries at least one record when the
-   * history has one, even if that record alone exceeds the byte budget; a full
-   * page reports hasMore instead of dropping the remaining records.
+   * records are parsed and corruption at or before the cursor is not
+   * re-detected here; use read() to revalidate the whole history. A missing
+   * history, including one deleted after a cursor was issued, is an empty page
+   * carrying the requested cursor rather than an error. The page always carries
+   * at least one record when the history has one, even if that record alone
+   * exceeds the byte budget; a full page reports hasMore instead of dropping
+   * the remaining records.
    * @param sessionId - Required session id.
    * @param afterSeq - Exclusive cursor; 0 starts at the first record.
    * @param limit - Requested record count, clamped to the fixed page limit.
