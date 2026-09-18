@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.5] - 2026-09-18
 
 - Harden the activity cursor contract additively: `readAfter` marks a page with `historyMissing: true` when the cursor is past 0 and the history file no longer exists (a deleted history is never reported as caught up), and throws the exported `ExternalAgentActivityCursorAheadError` (`kind: 'cursor-ahead'`, `afterSeq`, `historyLength`) instead of a prose-only error when the cursor is past the end of an existing history. The JSONL schema, page limits, and existing failure behavior are unchanged.
 
