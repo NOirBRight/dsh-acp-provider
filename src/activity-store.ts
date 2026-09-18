@@ -58,6 +58,37 @@ export interface ExternalAgentActivityPage<TRecord extends ExternalAgentActivity
   readonly nextCursor: number
   /** True when the history holds further records after this page. */
   readonly hasMore: boolean
+  /**
+   * Present and true only when the history file is absent and afterSeq was
+   * greater than 0: the cursor this caller was following cannot be satisfied
+   * because the history no longer exists, so the consumer should resync instead
+   * of treating the empty page as caught up. Omitted for an existing history,
+   * including one with zero records, and for an absent history at afterSeq 0,
+   * which stays an ordinary empty page because nothing was being followed yet.
+   * Consumers that ignore the field keep the previous behavior.
+   */
+  readonly historyMissing?: boolean
+}
+
+/** Thrown by readAfter when the cursor is past the end of an existing history. */
+export class ExternalAgentActivityCursorAheadError extends Error {
+  /** Stable discriminator to branch on instead of matching the message text. */
+  readonly kind = 'cursor-ahead'
+  /** The requested exclusive cursor. */
+  readonly afterSeq: number
+  /** Complete records the existing history holds, always below afterSeq. */
+  readonly historyLength: number
+
+  /** Capture the requested cursor and the history length it exceeded.
+   * @param afterSeq - Requested exclusive cursor.
+   * @param historyLength - Complete records in the existing history.
+   */
+  constructor(afterSeq: number, historyLength: number) {
+    super('External agent activity cursor ' + String(afterSeq) + ' is ahead of the ' + String(historyLength) + '-record history')
+    this.name = 'ExternalAgentActivityCursorAheadError'
+    this.afterSeq = afterSeq
+    this.historyLength = historyLength
+  }
 }
 
 /** Decode one history line, throwing fail-closed on any invalid field.
@@ -183,14 +214,18 @@ export class ExternalAgentActivityStore<TEvent extends ExternalAgentActivityEven
    * records are parsed and corruption at or before the cursor is not
    * re-detected here; use read() to revalidate the whole history. A missing
    * history, including one deleted after a cursor was issued, is an empty page
-   * carrying the requested cursor rather than an error. The page always carries
-   * at least one record when the history has one, even if that record alone
-   * exceeds the byte budget; a full page reports hasMore instead of dropping
-   * the remaining records.
+   * carrying the requested cursor rather than an error; when afterSeq is
+   * greater than 0 that page also sets historyMissing so the consumer can tell
+   * a deleted history from an existing empty or short one. A cursor past the
+   * end of an existing history throws the exported
+   * ExternalAgentActivityCursorAheadError. The page always carries at least one
+   * record when the history has one, even if that record alone exceeds the byte
+   * budget; a full page reports hasMore instead of dropping the remaining records.
    * @param sessionId - Required session id.
    * @param afterSeq - Exclusive cursor; 0 starts at the first record.
    * @param limit - Requested record count, clamped to the fixed page limit.
    * @returns Ordered records, the cursor to pass next, and whether more remain.
+   * @throws ExternalAgentActivityCursorAheadError - When afterSeq exceeds an existing history's record count.
    */
   readAfter(sessionId: string, afterSeq: number, limit: number): ExternalAgentActivityPage<TRecord> {
     requireSessionId(sessionId)
@@ -200,7 +235,7 @@ export class ExternalAgentActivityStore<TEvent extends ExternalAgentActivityEven
     try {
       fd = openHistory(this.fileFor(sessionId), constants.O_RDONLY | constants.O_NOFOLLOW)
     } catch (error) {
-      if (isFileNotFound(error)) return { records: [], nextCursor: afterSeq, hasMore: false }
+      if (isFileNotFound(error)) return missingHistoryPage(afterSeq)
       throw error
     }
     try {
@@ -243,7 +278,7 @@ export class ExternalAgentActivityStore<TEvent extends ExternalAgentActivityEven
       }
     }
     if (carry !== undefined && carry.byteLength > 0) throw corrupt('incomplete trailing record')
-    if (afterSeq > line) throw new Error('External agent activity cursor ' + String(afterSeq) + ' is ahead of the ' + String(line) + '-record history')
+    if (afterSeq > line) throw new ExternalAgentActivityCursorAheadError(afterSeq, line)
     return { records, nextCursor: lastSeq(records, afterSeq), hasMore: false }
   }
 
@@ -268,6 +303,12 @@ export class ExternalAgentActivityStore<TEvent extends ExternalAgentActivityEven
 
 function lastSeq<TRecord extends ExternalAgentActivityRecord>(records: readonly TRecord[], fallback: number): number {
   return records.length === 0 ? fallback : records[records.length - 1]!.seq
+}
+
+function missingHistoryPage<TRecord extends ExternalAgentActivityRecord>(afterSeq: number): ExternalAgentActivityPage<TRecord> {
+  return afterSeq === 0
+    ? { records: [], nextCursor: 0, hasMore: false }
+    : { records: [], nextCursor: afterSeq, hasMore: false, historyMissing: true }
 }
 
 function requireSessionId(sessionId: string): void {

@@ -8,6 +8,7 @@ import { latestNativeSessionBinding } from '../src/contracts.js'
 import {
   EXTERNAL_AGENT_ACTIVITY_MAX_PAGE_BYTES,
   EXTERNAL_AGENT_ACTIVITY_MAX_PAGE_RECORDS,
+  ExternalAgentActivityCursorAheadError,
   ExternalAgentActivityStore,
   type ExternalAgentActivityRecord,
 } from '../src/activity-store.js'
@@ -54,6 +55,15 @@ function onlyFile(root: string): string {
 }
 function pathFor(root: string, sessionId: string): string {
   return join(root, createHash('sha256').update(sessionId, 'utf8').digest('hex') + '.jsonl')
+}
+function thrownBy(run: () => unknown): Error {
+  try {
+    run()
+  } catch (error) {
+    if (error instanceof Error) return error
+    throw new Error('expected an Error, received ' + String(error))
+  }
+  throw new Error('expected the call to throw')
 }
 
 describe('ExternalAgentActivityStore', () => {
@@ -327,7 +337,7 @@ describe('ExternalAgentActivityStore', () => {
     expect(next.hasMore).toBe(false)
     expect(reader.read('session-a').records.map(record => record.seq)).toEqual([1, 2, 3, 4, 5, 6])
     expect(reader.readAfter('session-unknown', 0, 10)).toEqual({ records: [], nextCursor: 0, hasMore: false })
-    expect(reader.readAfter('session-unknown', 4, 10)).toEqual({ records: [], nextCursor: 4, hasMore: false })
+    expect(reader.readAfter('session-unknown', 4, 10)).toEqual({ records: [], nextCursor: 4, hasMore: false, historyMissing: true })
   })
   it('clamps pages to fixed limits and never drops a record larger than the byte budget', () => {
     const root = tempRoot()
@@ -374,6 +384,71 @@ describe('ExternalAgentActivityStore', () => {
     for (const limit of [0, -1, 1.5, Number.NaN]) {
       expect(() => activity.readAfter('session-a', 0, limit)).toThrow(/page limit/)
     }
+  })
+  it('marks a deleted history only for a cursor past the start', () => {
+    const root = tempRoot()
+    const activity = store(root)
+    activity.append('session-gone', [ready, start])
+    rmSync(pathFor(root, 'session-gone'))
+    expect(activity.readAfter('session-gone', 0, 10)).toEqual({ records: [], nextCursor: 0, hasMore: false })
+    expect(activity.readAfter('session-gone', 0, 10).historyMissing).toBeUndefined()
+    const stale = activity.readAfter('session-gone', 2, 10)
+    expect(stale).toEqual({ records: [], nextCursor: 2, hasMore: false, historyMissing: true })
+    expect(stale.historyMissing).toBe(true)
+    expect(activity.readAfter('session-gone', 99, 10).historyMissing).toBe(true)
+  })
+  it('does not mark an existing empty or short history as missing', () => {
+    const root = tempRoot()
+    const activity = store(root)
+    writeFileSync(pathFor(root, 'session-empty'), '')
+    expect(activity.readAfter('session-empty', 0, 10)).toEqual({ records: [], nextCursor: 0, hasMore: false })
+    expect(activity.readAfter('session-empty', 0, 10).historyMissing).toBeUndefined()
+    activity.append('session-short', [ready])
+    expect(activity.readAfter('session-short', 1, 10)).toEqual({ records: [], nextCursor: 1, hasMore: false })
+    expect(activity.readAfter('session-short', 1, 10).historyMissing).toBeUndefined()
+    expect(() => activity.readAfter('session-short', 2, 10)).toThrow(ExternalAgentActivityCursorAheadError)
+  })
+  it('throws a typed cursor-ahead error carrying the cursor and history length', () => {
+    const root = tempRoot()
+    const activity = store(root)
+    activity.append('session-a', [ready, start, update])
+    writeFileSync(pathFor(root, 'session-empty'), '')
+    for (const [sessionId, afterSeq, historyLength] of [['session-a', 4, 3], ['session-a', 10, 3], ['session-empty', 1, 0]] as const) {
+      const error = thrownBy(() => activity.readAfter(sessionId, afterSeq, 10))
+      expect(error).toBeInstanceOf(ExternalAgentActivityCursorAheadError)
+      expect(error).toBeInstanceOf(Error)
+      const ahead = error as ExternalAgentActivityCursorAheadError
+      expect(ahead.name).toBe('ExternalAgentActivityCursorAheadError')
+      expect(ahead.kind).toBe('cursor-ahead')
+      expect(ahead.afterSeq).toBe(afterSeq)
+      expect(ahead.historyLength).toBe(historyLength)
+      expect(ahead.message).toBe('External agent activity cursor ' + String(afterSeq) + ' is ahead of the ' + String(historyLength) + '-record history')
+    }
+    expect(activity.readAfter('session-absent', 4, 10)).toEqual({ records: [], nextCursor: 4, hasMore: false, historyMissing: true })
+  })
+  it('keeps restart, torn trailing records, and symlinks unchanged around the page contract', () => {
+    const root = tempRoot()
+    const activity = store(root)
+    activity.append('session-a', [ready, start])
+    const restarted = store(root)
+    expect(restarted.readAfter('session-a', 2, 10)).toEqual({ records: [], nextCursor: 2, hasMore: false })
+    restarted.append('session-a', [update])
+    expect(restarted.readAfter('session-a', 2, 10).records.map(record => record.seq)).toEqual([3])
+    rmSync(pathFor(root, 'session-a'))
+    expect(restarted.readAfter('session-a', 3, 10)).toEqual({ records: [], nextCursor: 3, hasMore: false, historyMissing: true })
+    restarted.append('session-a', [ready])
+    expect(restarted.read('session-a').records.map(record => record.seq)).toEqual([1])
+    appendFileSync(pathFor(root, 'session-a'), '{"v":7,"seq":2')
+    const torn = thrownBy(() => restarted.readAfter('session-a', 0, 10))
+    expect(torn).not.toBeInstanceOf(ExternalAgentActivityCursorAheadError)
+    expect(torn.message).toMatch(/corrupt/)
+    const target = join(root, 'target.jsonl')
+    writeFileSync(target, 'sentinel')
+    symlinkSync(target, pathFor(root, 'session-sym'))
+    const linked = thrownBy(() => restarted.readAfter('session-sym', 1, 10))
+    expect(linked).not.toBeInstanceOf(ExternalAgentActivityCursorAheadError)
+    expect(linked.message).toMatch(/symbolic link/)
+    expect(readFileSync(target, 'utf8')).toBe('sentinel')
   })
 })
 
