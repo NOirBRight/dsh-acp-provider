@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.6] - 2026-09-20
+
+- Add browser-only `native-ui` and pure `native-preview` exports so ACP adapters share one accessible read-only tool presentation without importing React from the Node entrypoint. Structured payload previews stay valid JSON when bounded.
+- Add the Node-only `activity-coalescer` export: one provider-neutral bounded coalescer behind a vendor codec, keeping the reviewed 400 ms window, 64-record, 8192-character, 256 KiB, and 32-repaint ceilings, barrier ordering, deferred failures, and `flushAll`/`release`/`reset` teardown. It carries no metrics parameter and reports buffers through `pendingCount(sessionId)` and `pendingBytes(sessionId)` instead.
+- Add the browser-safe `native-history` export: the WeakMap-retained fold, cursor, and snapshot per scope and session, with bounded incremental paging, immediate per-page publication, stable snapshot identity, `StaleNativeHistoryCursorError` resynchronization, and a fresh empty snapshot per entry. It exposes no metrics seam.
+
 ## [0.1.5] - 2026-09-18
 
 - Harden the activity cursor contract additively: `readAfter` marks a page with `historyMissing: true` when the cursor is past 0 and the history file no longer exists (a deleted history is never reported as caught up), and throws the exported `ExternalAgentActivityCursorAheadError` (`kind: 'cursor-ahead'`, `afterSeq`, `historyLength`) instead of a prose-only error when the cursor is past the end of an existing history. The JSONL schema, page limits, and existing failure behavior are unchanged.

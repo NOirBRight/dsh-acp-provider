@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-acp-provider",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "packageManager": "pnpm@10.33.0",
   "type": "module",
   "description": "Provider-neutral External Agent platform for DSH providers and consumers.",
@@ -9,10 +9,14 @@
   "publishConfig": { "access": "public" },
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./activity-coalescer": { "types": "./dist/activity-coalescer.d.ts", "default": "./dist/activity-coalescer.js" },
     "./activity-store": { "types": "./dist/activity-store.d.ts", "default": "./dist/activity-store.js" },
     "./consumers": { "types": "./dist/consumers.d.ts", "default": "./dist/consumers.js" },
     "./fake": { "types": "./dist/fake.d.ts", "default": "./dist/fake.js" },
     "./filesystem": { "types": "./dist/filesystem.d.ts", "default": "./dist/filesystem.js" },
+    "./native-history": { "types": "./dist/native-history.d.ts", "default": "./dist/native-history.js" },
+    "./native-preview": { "types": "./dist/native-preview.d.ts", "default": "./dist/native-preview.js" },
+    "./native-ui": { "types": "./dist/native-ui.d.ts", "default": "./dist/native-ui.js" },
     "./settings": { "types": "./dist/settings.d.ts", "default": "./dist/settings.js" }
   },
   "files": ["dist", "README.md", "docs", "LICENSE"],
@@ -22,8 +26,21 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {},
+  "peerDependencies": {
+    "@deepseek-ai/dsh-client-ui-primitives": "*",
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-client-ui-primitives": { "optional": true },
+    "react": { "optional": true }
+  },
   "devDependencies": {
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.5-rc.1",
     "@types/node": "^22.12.0",
+    "@types/react": "~18.3.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@types/react-dom": "~18.3.1",
     "typescript": "^5.6.3",
     "vitest": "^3.2.4"
   },

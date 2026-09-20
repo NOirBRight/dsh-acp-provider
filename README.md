@@ -4,7 +4,7 @@ Provider-neutral External Agent platform for DeepSeek Harness.
 
 Providers register exact model routes and execute native turns. ExternalAgentTurnRunner owns the sessions used by a host adapter: reuse, model selection, cursor persistence, cancellation, replacement, and disposal all use the registry. Native activity describes observed work, never DSH-owned tool execution.
 
-The package is dependency-free ESM TypeScript. ACP transport, subprocesses, authentication, filesystem mediation, and provider-specific Settings editors belong to provider packages.
+The Node entrypoints are dependency-free ESM TypeScript. The optional browser-only `native-ui` entrypoint peers on React and DSH UI primitives. ACP transport, subprocesses, authentication, filesystem mediation, and provider-specific Settings editors belong to provider packages.
 
 ## Install and verify
 
@@ -51,6 +51,10 @@ Question callbacks keep every response string in `ExternalAgentUserInputAnswers.
 - Bindings are saved before the first prompt and whenever a result changes the native reference. Failed writes fail the turn and release its transport. Ownership and usage fields are explicit in canonical events; payload limits still apply.
 - Full-access reuse repeats authorization and audit through the registry. A host may supply prior explicit authority without displaying a second approval prompt; it must not infer authority from model or user text.
 
+## Native tool presentation
+
+`@deepseek-ai/dsh-acp-provider/native-ui` renders normalized, read-only tool rows with the Host's disclosure, read, diff, terminal, copy, and inspect primitives. Provider adapters keep vendor name aliases and payload parsing, then pass a `NativeToolCardProps` model across this seam. The module never executes tools or reads files. `@deepseek-ai/dsh-acp-provider/native-preview` bounds persisted payloads without producing invalid JSON fragments.
+
 ## DSH integration
 
 The supported Antigravity path is a DSH LLM adapter using ExternalAgentTurnRunner, not a second DSH loop. Give the runner the same registry that owns provider registration, connect its persistence callbacks to native bindings, call release when a DSH session is disposed, and await reset before replacing or signing out a provider. dispose permanently closes the runner. A binding without a resume cursor, an unavailable native context, or unreadable binding storage fails closed; none silently creates a new context.
@@ -58,5 +62,9 @@ The supported Antigravity path is a DSH LLM adapter using ExternalAgentTurnRunne
 bridge/ is a retired composition experiment requiring host hooks that the supported LLM-adapter path does not use. The exported primary/subagent consumers are standalone examples, not the required DSH integration route. Their existing lifecycle rules remain covered; new providers should not copy or extend that experimental composition.
 
 The Node-only activity-store export owns versioned append-only history and filesystem safety; each adapter supplies its existing event decoder. Sequence allocation is cached per session after one validation read, so appending is O(batch) and independent per session. `read()` stays the validating bootstrap and binding read; `readAfter(sessionId, afterSeq, limit)` adds bounded incremental pages (ordered records, next cursor, continuation) under fixed record and byte limits. A page whose history file no longer exists is empty and, for a cursor past 0, carries `historyMissing: true` — a deleted history is never reported as caught up — while an absent history at cursor 0 and an existing empty or short history keep their previous behavior. A cursor past the end of an existing history throws the exported `ExternalAgentActivityCursorAheadError` (`kind: 'cursor-ahead'`, `afterSeq`, `historyLength`) instead of relying on message text. Browser code must not import this subpath. Binding lookup is `latestNativeSessionBinding` on the browser-safe contracts export and returns branded `ExternalAgentSessionRef`. History remains readable without a native runtime.
+
+The Node-only `activity-coalescer` export bounds per-session activity writes. A vendor codec normalizes the adapter's durable events into text and running-tool records, transient deltas merge in memory, and every other record — terminal tool states included — flushes what it followed and is written on arrival. Each session buffer is bounded by the reviewed ceilings (400 ms window, 64 records, 8192 characters per text record, 256 KiB serialized, 32 repaints before a redraw is written anyway); crossing one forces a flush, never a dropped record. A timer-driven flush failure is deferred to the next append or explicit flush with no retry, `flushAll`/`release`/`reset` own teardown, and `pendingCount(sessionId)`/`pendingBytes(sessionId)` report one session's buffer. It carries no metrics seam.
+
+The browser-safe `native-history` export retains one fold, one cursor, and one snapshot per scope and session: it pages from cursor 0 on the first read, then requests only records after the retained cursor in bounded pages (4 per poll, 1000 ms apart), publishes every accepted page immediately, keeps snapshot identity while nothing changed, and rebuilds from 0 when the adapter's read throws the exported `StaleNativeHistoryCursorError`. The first listener starts polling and the last stops the timer and the active read while the cached history stays retained, so navigation displays it again without a full reread.
 
 Concrete providers are separate packages. The Antigravity ACP provider uses the official @agentclientprotocol/sdk, an explicitly configured Google executable pair, a private OAuth profile, and host-owned filesystem mediation.

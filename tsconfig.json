@@ -13,6 +13,7 @@
     "sourceMap": true,
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
+    "jsx": "react-jsx",
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true
