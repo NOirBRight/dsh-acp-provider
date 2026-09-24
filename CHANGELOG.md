@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Align the optional UI-primitives peer and development dependency with alpha2, satisfy its Cordis peer in development, and use alpha2 icon exports in the shared native tool card.
+
 ## [0.1.6] - 2026-09-20
 
 - Add browser-only `native-ui` and pure `native-preview` exports so ACP adapters share one accessible read-only tool presentation without importing React from the Node entrypoint. Structured payload previews stay valid JSON when bounded.

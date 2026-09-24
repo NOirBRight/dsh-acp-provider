@@ -8,13 +8,13 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   DiffBlock: (props: unknown) => <div data-diff-block="">{JSON.stringify(props)}</div>,
   TerminalBlock: (props: unknown) => <div data-terminal-block="">{JSON.stringify(props)}</div>,
   writeClipboard: async () => true,
-  IconApiOutline14: () => null,
-  IconBrowseOutline16: () => null,
-  IconChecklistOutline14: () => null,
-  IconEditOutline16: () => null,
-  IconGlobeOutline14: () => null,
-  IconSearchOutline16: () => null,
-  IconSparkle16: () => null,
+  IconApiOutlineRegular: () => null,
+  IconBrowseOutlineRegular: () => null,
+  IconChecklistOutlineRegular: () => null,
+  IconEditOutlineRegular: () => null,
+  IconGlobeOutlineRegular: () => null,
+  IconSearchOutlineRegular: () => null,
+  IconSparkleRegular: () => null,
 }))
 
 import { NativeToolCard, prettyNativeToolPayload, type NativeToolCardProps } from '../src/native-ui.js'

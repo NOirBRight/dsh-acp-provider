@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-acp-provider",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "packageManager": "pnpm@10.33.0",
   "type": "module",
   "description": "Provider-neutral External Agent platform for DSH providers and consumers.",
@@ -27,7 +27,7 @@
   },
   "dependencies": {},
   "peerDependencies": {
-    "@deepseek-ai/dsh-client-ui-primitives": "*",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.7-alpha.2",
     "react": "^18.2.0"
   },
   "peerDependenciesMeta": {
@@ -35,7 +35,8 @@
     "react": { "optional": true }
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-client-ui-primitives": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.7-alpha.2",
+    "@deepseek-ai/cordis": "~4.0.4",
     "@types/node": "^22.12.0",
     "@types/react": "~18.3.1",
     "react": "^18.2.0",

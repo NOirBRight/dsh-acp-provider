@@ -2,13 +2,13 @@ import { useState, type CSSProperties, type JSX, type ReactNode } from 'react'
 import {
   DisclosureRow,
   DiffBlock,
-  IconApiOutline14,
-  IconBrowseOutline16,
-  IconChecklistOutline14,
-  IconEditOutline16,
-  IconGlobeOutline14,
-  IconSearchOutline16,
-  IconSparkle16,
+  IconApiOutlineRegular,
+  IconBrowseOutlineRegular,
+  IconChecklistOutlineRegular,
+  IconEditOutlineRegular,
+  IconGlobeOutlineRegular,
+  IconSearchOutlineRegular,
+  IconSparkleRegular,
   ReadBlock,
   TerminalBlock,
   writeClipboard,
@@ -21,9 +21,10 @@ export type NativeToolTranslationKey =
   | 'tool.title.read' | 'todo.rowTitle' | 'tool.title.bash' | 'tool.title.grep' | 'tool.title.glob'
   | 'tool.title.webSearch' | 'tool.title.webFetch' | 'tool.title.write' | 'tool.title.edit' | 'tool.title.generic' | 'todo.completed'
   | 'copy' | 'copied' | 'collapse' | `${NativeToolDetailKind}.${'collapseAria' | 'expandAria' | 'expandRest'}`
-  | 'read.window' | 'diff.files.one' | 'diff.files.other' | 'terminal.signal' | 'terminal.exitCode'
+  | 'read.window' | 'terminal.signal' | 'terminal.exitCode' | 'terminal.noExitCode'
   | 'terminal.running' | 'terminal.failed' | 'terminal.done' | 'terminal.noOutput'
   | 'row.inspect' | 'row.input' | 'row.output'
+  | 'code.label' | 'code.wrap' | 'code.unwrap'
 export type NativeToolTranslate = (key: NativeToolTranslationKey, params?: Readonly<Record<string, string | number>>) => string
 
 export type NativeToolDetail =
@@ -46,15 +47,15 @@ export interface NativeToolCardProps {
 }
 
 const TOOL_PRESENTATION: Record<string, { readonly titleKey: NativeToolTranslationKey; readonly icon: ReactNode }> = {
-  read: { titleKey: 'tool.title.read', icon: <IconBrowseOutline16 size={14} /> },
-  todo_write: { titleKey: 'todo.rowTitle', icon: <IconChecklistOutline14 size={14} /> },
-  bash: { titleKey: 'tool.title.bash', icon: <IconApiOutline14 size={14} /> },
-  grep: { titleKey: 'tool.title.grep', icon: <IconSearchOutline16 size={14} /> },
-  glob: { titleKey: 'tool.title.glob', icon: <IconSearchOutline16 size={14} /> },
-  web_search: { titleKey: 'tool.title.webSearch', icon: <IconSearchOutline16 size={14} /> },
-  web_fetch: { titleKey: 'tool.title.webFetch', icon: <IconGlobeOutline14 size={14} /> },
-  write: { titleKey: 'tool.title.write', icon: <IconEditOutline16 size={14} /> },
-  edit: { titleKey: 'tool.title.edit', icon: <IconEditOutline16 size={14} /> },
+  read: { titleKey: 'tool.title.read', icon: <IconBrowseOutlineRegular size={14} /> },
+  todo_write: { titleKey: 'todo.rowTitle', icon: <IconChecklistOutlineRegular size={14} /> },
+  bash: { titleKey: 'tool.title.bash', icon: <IconApiOutlineRegular size={14} /> },
+  grep: { titleKey: 'tool.title.grep', icon: <IconSearchOutlineRegular size={14} /> },
+  glob: { titleKey: 'tool.title.glob', icon: <IconSearchOutlineRegular size={14} /> },
+  web_search: { titleKey: 'tool.title.webSearch', icon: <IconSearchOutlineRegular size={14} /> },
+  web_fetch: { titleKey: 'tool.title.webFetch', icon: <IconGlobeOutlineRegular size={14} /> },
+  write: { titleKey: 'tool.title.write', icon: <IconEditOutlineRegular size={14} /> },
+  edit: { titleKey: 'tool.title.edit', icon: <IconEditOutlineRegular size={14} /> },
 }
 
 const sep = ' \u00b7 '
@@ -92,7 +93,7 @@ function titleOf(toolName: string, t: NativeToolTranslate): string {
 }
 
 function iconOf(toolName: string): ReactNode {
-  return TOOL_PRESENTATION[toolName]?.icon ?? <IconSparkle16 size={14} />
+  return TOOL_PRESENTATION[toolName]?.icon ?? <IconSparkleRegular size={14} />
 }
 
 function detailLabels(kind: 'read' | 'diff' | 'terminal', t: NativeToolTranslate) {
@@ -106,6 +107,14 @@ function detailLabels(kind: 'read' | 'diff' | 'terminal', t: NativeToolTranslate
   }
 }
 
+function codeToolbarLabels(t: NativeToolTranslate) {
+  return {
+    codeLabel: t('code.label'),
+    wrapLabel: t('code.wrap'),
+    unwrapLabel: t('code.unwrap'),
+  }
+}
+
 function NativeToolBody(props: NativeToolCardProps): ReactNode {
   const [inspect, setInspect] = useState(false)
   const io = <NativeToolIO input={props.input} output={props.output} state={props.state} t={props.t} />
@@ -113,14 +122,14 @@ function NativeToolBody(props: NativeToolCardProps): ReactNode {
   let body: ReactNode
   switch (props.detail.kind) {
     case 'read': body = <ReadBlock label={props.detail.label} lines={props.detail.lines} totalLines={props.detail.totalLines} maxLines={8}
-      labels={{ ...detailLabels('read', props.t), window: (shown: number, total: number) => props.t('read.window', { shown, total }) }} />; break
+      labels={{ ...detailLabels('read', props.t), ...codeToolbarLabels(props.t), window: (shown: number, total: number) => props.t('read.window', { shown, total }) }} />; break
     case 'diff': body = <DiffBlock diffs={[...props.detail.diffs]} maxLines={9}
-      labels={{ ...detailLabels('diff', props.t), files: (count: number) => props.t(count === 1 ? 'diff.files.one' : 'diff.files.other', { count }) }} />; break
+      labels={{ ...detailLabels('diff', props.t), ...codeToolbarLabels(props.t) }} />; break
     case 'terminal': body = <TerminalBlock command={props.detail.command} output={props.detail.output} running={props.state === 'running'}
       cwd={props.detail.cwd} exitCode={props.detail.exitCode}
       labels={{ ...detailLabels('terminal', props.t), signal: (signal: string) => props.t('terminal.signal', { signal }),
-        exitCode: (code: number) => props.t('terminal.exitCode', { code }), running: props.t('terminal.running'),
-        failed: props.t('terminal.failed'), done: props.t('terminal.done'), noOutput: props.t('terminal.noOutput') }} />; break
+        exitCode: (code: number) => props.t('terminal.exitCode', { code }), noExitCode: props.t('terminal.noExitCode'),
+        running: props.t('terminal.running'), failed: props.t('terminal.failed'), done: props.t('terminal.done'), noOutput: props.t('terminal.noOutput') }} />; break
     case 'empty': body = <div data-card-empty-result style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 13 }}>{props.t('terminal.noOutput')}</div>; break
   }
   return <>{body}
