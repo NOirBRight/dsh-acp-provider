@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.8] - 2026-09-24
+
+- Accept official DSH UI primitives from `0.1.7-alpha.2` onward through an open-ended peer and development range; build and test against `0.1.7-rc.1`.
+
+## [0.1.7] - 2026-09-24
 
 - Align the optional UI-primitives peer and development dependency with alpha2, satisfy its Cordis peer in development, and use alpha2 icon exports in the shared native tool card.
 

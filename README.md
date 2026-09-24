@@ -6,6 +6,10 @@ Providers register exact model routes and execute native turns. ExternalAgentTur
 
 The Node entrypoints are dependency-free ESM TypeScript. The optional browser-only `native-ui` entrypoint peers on React and DSH UI primitives. ACP transport, subprocesses, authentication, filesystem mediation, and provider-specific Settings editors belong to provider packages.
 
+## Compatibility
+
+The optional `native-ui` entrypoint peers on `@deepseek-ai/dsh-client-ui-primitives` from `0.1.7-alpha.2` onward. Its compile lock targets `0.1.7-rc.1`.
+
 ## Install and verify
 
 ```sh
