@@ -47,6 +47,21 @@ describe('NativeToolCard', () => {
     expect(settled).toContain('data-card-empty-result')
     expect(running).not.toContain('data-card-result')
   })
+  it('shows the official common locale labels on expanded read and diff tools', () => {
+    const labels: Record<string, string> = {
+      'codeBlock.title': 'Code block',
+      'codeBlock.wrap': 'Wrap lines',
+      'codeBlock.unwrap': 'Do not wrap lines',
+    }
+    const translate: NativeToolCardProps['t'] = key => labels[key] ?? key
+    const read = renderToStaticMarkup(<NativeToolCard {...base} t={translate} detail={{ kind: 'read', label: '/tmp/a', lines: [], totalLines: 0 }} />)
+    const diff = renderToStaticMarkup(<NativeToolCard {...base} t={translate} detail={{ kind: 'diff', diffs: [] }} />)
+    for (const html of [read, diff]) {
+      expect(html).toContain('Code block')
+      expect(html).toContain('Wrap lines')
+      expect(html).toContain('Do not wrap lines')
+    }
+  })
 })
 
 it('pretty prints structured payloads without changing raw text', () => {

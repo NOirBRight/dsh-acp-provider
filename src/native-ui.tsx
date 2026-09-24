@@ -24,7 +24,7 @@ export type NativeToolTranslationKey =
   | 'read.window' | 'terminal.signal' | 'terminal.exitCode' | 'terminal.noExitCode'
   | 'terminal.running' | 'terminal.failed' | 'terminal.done' | 'terminal.noOutput'
   | 'row.inspect' | 'row.input' | 'row.output'
-  | 'code.label' | 'code.wrap' | 'code.unwrap'
+  | 'codeBlock.title' | 'codeBlock.wrap' | 'codeBlock.unwrap'
 export type NativeToolTranslate = (key: NativeToolTranslationKey, params?: Readonly<Record<string, string | number>>) => string
 
 export type NativeToolDetail =
@@ -109,9 +109,9 @@ function detailLabels(kind: 'read' | 'diff' | 'terminal', t: NativeToolTranslate
 
 function codeToolbarLabels(t: NativeToolTranslate) {
   return {
-    codeLabel: t('code.label'),
-    wrapLabel: t('code.wrap'),
-    unwrapLabel: t('code.unwrap'),
+    codeLabel: t('codeBlock.title'),
+    wrapLabel: t('codeBlock.wrap'),
+    unwrapLabel: t('codeBlock.unwrap'),
   }
 }
 
