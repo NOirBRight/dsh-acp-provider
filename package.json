@@ -19,11 +19,13 @@
     "./native-ui": { "types": "./dist/native-ui.d.ts", "default": "./dist/native-ui.js" },
     "./settings": { "types": "./dist/settings.d.ts", "default": "./dist/settings.js" }
   },
-  "files": ["dist", "README.md", "docs", "LICENSE"],
+  "files": ["dist", "README.md", "docs", "LICENSE", "scripts/check-dsh-host-ranges.mjs"],
   "scripts": {
-    "test": "vitest run",
+    "test": "pnpm run check:dsh-host-ranges && vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "check:dsh-host-ranges": "node scripts/check-dsh-host-ranges.mjs",
+    "prepack": "pnpm run check:dsh-host-ranges"
   },
   "dependencies": {},
   "peerDependencies": {
